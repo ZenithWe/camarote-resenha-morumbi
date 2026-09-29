@@ -15,7 +15,7 @@
   <dl class="order-details">
     <div><dt>Endereço atual</dt><dd>{{ site_url }}</dd></div>
     <div><dt>Banco gratuito atual</dt><dd>{% if db_expires %}expira em {{ db_expires }}{% else %}consulte o provedor{% endif %}</dd></div>
-    <div><dt>Backup administrativo</dt><dd>JSON com eventos, pedidos, lançamentos e textos — sem arquivos, senha ou chave Pix.</dd></div>
+    <div><dt>Gateway de pagamento</dt><dd>{% if payment_provider == 'pagarme' %}Pagar.me{% else %}Pix manual{% endif %}</dd></div><div><dt>Webhook Pagar.me</dt><dd>{{ pagarme_webhook_url }}</dd></div><div><dt>Backup administrativo</dt><dd>JSON com eventos, pedidos, lançamentos e textos — sem arquivos, senha, CPF ou chaves de pagamento.</dd></div>
   </dl>
   <div class="message info">Antes de vendas reais, recomendamos domínio próprio, banco sem prazo de expiração e SMTP/e-mail profissional. Essas etapas exigem conta/contratação do cliente e não são ativadas automaticamente.</div>
 </section>
