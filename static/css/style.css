@@ -169,3 +169,25 @@
   .customer-order-head{display:block}
   .customer-order-head>strong{display:block;margin-top:12px}
 }
+
+/* Modo de teste do administrador */
+.admin-test-banner{background:#5f3d00;color:#fff;border-bottom:1px solid #ffffff22}
+.admin-test-banner .container{min-height:42px;display:flex;align-items:center;gap:14px;font-size:.76rem}
+.admin-test-banner strong{letter-spacing:.07em}
+.admin-test-banner span{opacity:.9}
+.admin-test-banner a{margin-left:auto;color:#fff;text-decoration:underline;font-weight:800}
+.test-mode-pill{display:inline-flex;margin-left:10px;padding:4px 7px;border-radius:999px;background:#fff2c7;color:#7b5700;font-size:.62rem;font-weight:900;letter-spacing:.05em;vertical-align:middle}
+.test-mode-box{border:1px solid #e6bd5f;background:#fff8df;color:#6f5000}
+.test-control-card{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:24px;border:1px solid var(--border)}
+.test-control-card.active{border-color:#d6aa43;background:#fffdf5}
+.test-control-card h2{margin-bottom:7px}
+.test-control-card p{max-width:760px;color:var(--muted)}
+.test-control-card .actions{flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:760px){
+  .admin-test-banner .container{align-items:flex-start;flex-wrap:wrap;padding-block:9px}
+  .admin-test-banner a{margin-left:0}
+  .test-control-card{display:block}
+  .test-control-card .actions{margin-top:16px;justify-content:flex-start}
+  .test-control-card .actions .btn,.test-control-card .actions form{width:100%}
+  .test-control-card .actions form .btn{width:100%}
+}
