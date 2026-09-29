@@ -106,6 +106,15 @@ class Coupon(models.Model):
     def used(self): return self.orders.filter(status='paid').count()
     def __str__(self): return self.code
 
+class Testimonial(models.Model):
+    name=models.CharField('nome',max_length=100)
+    text=models.CharField('depoimento',max_length=600)
+    active=models.BooleanField('exibir no site',default=True)
+    position=models.PositiveSmallIntegerField('ordem',default=0)
+    created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=['position','id']
+    def __str__(self): return self.name
+
 class Order(models.Model):
     STATUSES=[('pending','Aguardando pagamento'),('review','Em análise'),('paid','Confirmado'),('cancelled','Cancelado'),('refunded','Reembolsado')]
     id=models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False)
