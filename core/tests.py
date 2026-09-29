@@ -1,0 +1,47 @@
+import hashlib, hmac, uuid
+from datetime import timedelta
+from decimal import Decimal
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
+from django.utils import timezone
+from .models import SiteSettings, Event, Coupon, EventTicket
+from .services import create_order, assign_event_tickets, validate_mercadopago_webhook
+
+@override_settings(PAYMENT_PROVIDER='manual')
+class CommerceTests(TestCase):
+    def setUp(self):
+        SiteSettings.objects.create(pk=1,pix_key='teste@example.com',pix_name='RESENHA',pix_city='SAO PAULO',sales_enabled=True)
+        self.event=Event.objects.create(
+            title='Evento teste',description='Teste',category='football',
+            starts_at=timezone.now()+timedelta(days=10),price=Decimal('100.00'),
+            capacity=20,max_per_order=4,status='published'
+        )
+
+    def order_data(self,**extra):
+        data={'event_id':self.event.pk,'customer_name':'Cliente Teste','email':'cliente@example.com','phone':'5511999999999','quantity':2,'request_key':uuid.uuid4(),'coupon_code':''}
+        data.update(extra)
+        return data
+
+    def test_coupon_applies_to_total(self):
+        Coupon.objects.create(code='DEZ',discount_type='percent',value=Decimal('10'),max_uses=5,active=True)
+        order=create_order(self.order_data(coupon_code='DEZ'),'hash')
+        self.assertEqual(order.discount_amount,Decimal('20.00'))
+        self.assertEqual(order.total,Decimal('180.00'))
+
+    def test_paid_order_receives_inventory(self):
+        order=create_order(self.order_data(),'hash')
+        order.status='paid'; order.paid_at=timezone.now(); order.save(update_fields=['status','paid_at'])
+        for i in range(2):
+            EventTicket.objects.create(event=self.event,label=f'Ingresso {i+1}',file=SimpleUploadedFile(f'i{i}.pdf',b'%PDF-1.4\n%%EOF',content_type='application/pdf'))
+        assigned=assign_event_tickets(order.pk)
+        self.assertEqual(assigned,2)
+        self.assertEqual(order.assigned_tickets.count(),2)
+
+class MercadoPagoSignatureTests(TestCase):
+    @override_settings(MERCADOPAGO_WEBHOOK_SECRET='segredo')
+    def test_valid_signature(self):
+        data_id='12345'; request_id='abc'; ts='1700000000'
+        manifest=f'id:{data_id};request-id:{request_id};ts:{ts};'
+        signature=hmac.new(b'segredo',manifest.encode(),hashlib.sha256).hexdigest()
+        header=f'ts={ts},v1={signature}'
+        self.assertTrue(validate_mercadopago_webhook(header,request_id,data_id))
