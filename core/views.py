@@ -1,4 +1,4 @@
-import calendar, csv, uuid, re, json, secrets
+import calendar, csv, uuid, re, json, secrets, smtplib, socket, logging
 from io import BytesIO
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -26,6 +26,8 @@ from .models import Event, EventPhoto, Order, OrderTicket, EventTicket, Coupon, 
 from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, CouponForm, TicketInventoryUploadForm, CustomerEmailForm, CustomerCodeForm, TestimonialForm, clean_image
 from .content import CONTENT, DEFAULT_TEXTS
 from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook, assign_event_tickets, send_customer_login_code, customer_code_hash, email_shell
+
+logger=logging.getLogger(__name__)
 
 operator_required=user_passes_test(lambda u:u.is_active and u.is_superuser,login_url='/painel/entrar/')
 def is_admin_test_mode(request):
@@ -430,10 +432,22 @@ def send_test_email(request):
     ],button_text='Abrir o site',button_url=settings.SITE_URL)
     try:
         sent=send_mail('Resenha Morumbi • teste de e-mail',plain,settings.DEFAULT_FROM_EMAIL,[recipient],fail_silently=False,html_message=html_body)
-        if sent: messages.success(request,'E-mail de teste enviado para a conta configurada.')
-        else: messages.error(request,'O servidor não confirmou o envio do e-mail.')
-    except Exception:
-        messages.error(request,'Não foi possível enviar. Confira o Gmail e a senha de aplicativo no Render.')
+        if sent:
+            messages.success(request,'E-mail de teste enviado. Confira também Spam, Promoções e Lixeira.')
+        else:
+            messages.error(request,'O Gmail não confirmou o envio. Confira a configuração SMTP.')
+    except smtplib.SMTPAuthenticationError:
+        logger.warning('Gmail SMTP: falha de autenticação')
+        messages.error(request,'O Gmail recusou o login. Ative a verificação em duas etapas e use uma SENHA DE APLICATIVO, não a senha normal da conta.')
+    except (smtplib.SMTPConnectError,smtplib.SMTPServerDisconnected,socket.timeout,TimeoutError):
+        logger.warning('Gmail SMTP: falha de conexão')
+        messages.error(request,'Não foi possível conectar ao Gmail agora. Tente novamente em alguns minutos.')
+    except smtplib.SMTPRecipientsRefused:
+        logger.warning('Gmail SMTP: destinatário recusado')
+        messages.error(request,'O Gmail recusou o destinatário do teste. Confira o endereço configurado.')
+    except Exception as exc:
+        logger.warning('Gmail SMTP: erro %s',exc.__class__.__name__)
+        messages.error(request,'Falha no envio pelo Gmail. O erro foi registrado sem expor sua senha.')
     return redirect('production_status')
 
 @operator_required
