@@ -131,3 +131,8 @@ PAYMENT_PROVIDER=os.getenv('PAYMENT_PROVIDER','manual').strip().lower()
 PAGARME_SECRET_KEY=os.getenv('PAGARME_SECRET_KEY','').strip()
 PAGARME_API_BASE=os.getenv('PAGARME_API_BASE','https://api.pagar.me/core/v5').rstrip('/')
 PAGARME_CONFIGURED=PAYMENT_PROVIDER=='pagarme' and bool(PAGARME_SECRET_KEY)
+
+MERCADOPAGO_ACCESS_TOKEN=os.getenv('MERCADOPAGO_ACCESS_TOKEN','').strip()
+MERCADOPAGO_WEBHOOK_SECRET=os.getenv('MERCADOPAGO_WEBHOOK_SECRET','').strip()
+MERCADOPAGO_API_BASE=os.getenv('MERCADOPAGO_API_BASE','https://api.mercadopago.com').rstrip('/')
+MERCADOPAGO_CONFIGURED=PAYMENT_PROVIDER=='mercadopago' and bool(MERCADOPAGO_ACCESS_TOKEN)
