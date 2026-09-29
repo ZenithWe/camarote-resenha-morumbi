@@ -37,3 +37,65 @@
 .agenda-empty{background:#fff;border:1px dashed #d9dce1;border-radius:10px;padding:30px;color:var(--muted);font-size:.9rem}
 @media(max-width:1000px){.agenda-columns{grid-template-columns:1fr}}
 @media(max-width:760px){.agenda-columns{gap:34px}.agenda-card{grid-template-columns:58px minmax(0,1fr) 20px;gap:12px;padding:14px}.agenda-date{height:68px}.agenda-date strong{font-size:1.65rem}.agenda-card-main h4{font-size:.93rem}.agenda-times{gap:8px 16px}.agenda-times>span>span{display:block}.agenda-times small{display:block;margin-bottom:1px}.agenda-times strong{font-size:.76rem}}
+
+/* Agenda pública completa */
+.agenda-heading-actions{display:flex;flex-direction:column;align-items:flex-end;gap:12px}
+.agenda-public-toolbar{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:22px}
+.public-calendar-nav{display:flex;align-items:center;gap:12px}
+.public-calendar-nav h2{margin:0;min-width:190px;text-align:center;font-size:1.25rem}
+.public-calendar-nav .icon-btn{border:1px solid var(--border)}
+.public-calendar-surface{padding:0;overflow:hidden}
+.public-agenda-list{margin-top:34px}
+.public-agenda-row{color:inherit}
+.public-page-heading{margin-bottom:34px}
+
+/* Detalhes extras do evento */
+.event-service-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.event-service-grid article{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--border);border-radius:9px;padding:16px;background:#fafbfc}
+.event-service-grid article>span{width:35px;height:35px;display:grid;place-items:center;border-radius:8px;background:#fff0f1;color:var(--red);flex-shrink:0}
+.event-service-grid article svg{width:17px;height:17px}
+.event-service-grid small{display:block;color:var(--muted);font-size:.72rem;margin-bottom:4px}
+.event-service-grid p{font-size:.84rem;line-height:1.55;margin:0}
+
+/* Etapas de compra */
+.purchase-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:24px 0 30px;max-width:680px}
+.purchase-steps span{position:relative;display:flex;align-items:center;gap:8px;color:#9a9da3;font-size:.77rem;font-weight:650}
+.purchase-steps span::after{content:"";height:2px;background:#e4e6e9;position:absolute;left:31px;right:-8px;top:14px;z-index:0}
+.purchase-steps span:last-child::after{display:none}
+.purchase-steps b{position:relative;z-index:1;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:#eceef1;color:#7b7f86;font-size:.72rem}
+.purchase-steps span.done,.purchase-steps span.active{color:var(--ink)}
+.purchase-steps span.done b{background:#e8f7ef;color:var(--green)}
+.purchase-steps span.active b{background:var(--red);color:#fff}
+.purchase-steps span.done::after{background:#a9d9c4}
+.order-steps{max-width:760px}
+
+/* Dashboard comercial */
+.commercial-stat-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:18px 0 24px}
+.top-events-section{margin-bottom:24px}
+
+/* Produção */
+.production-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:24px}
+.production-check{display:flex;gap:16px;align-items:flex-start}
+.production-check h2{font-size:1rem;margin-bottom:7px}
+.production-check p{font-size:.82rem;color:var(--muted);margin-bottom:8px}
+.production-check strong{font-size:.75rem}
+.production-status{width:42px;height:42px;display:grid;place-items:center;border-radius:10px;flex-shrink:0}
+.production-check.ok .production-status{background:#eaf8f1;color:var(--green)}
+.production-check.pending .production-status{background:#fff5df;color:#9b6b15}
+.production-note{margin-top:10px}
+
+@media(max-width:1000px){
+  .agenda-public-toolbar{align-items:flex-start;flex-direction:column}
+  .agenda-heading-actions{align-items:flex-start}
+  .event-service-grid{grid-template-columns:1fr}
+  .commercial-stat-grid{grid-template-columns:1fr 1fr}
+}
+@media(max-width:760px){
+  .purchase-steps{gap:2px;margin:20px 0 26px}
+  .purchase-steps span{font-size:.68rem;gap:5px;flex-direction:column;align-items:flex-start}
+  .purchase-steps span::after{left:25px;right:-3px;top:13px}
+  .purchase-steps b{width:26px;height:26px}
+  .production-grid,.commercial-stat-grid{grid-template-columns:1fr}
+  .public-calendar-nav{width:100%;justify-content:space-between}
+  .public-calendar-nav h2{min-width:0;font-size:1.05rem}
+}
