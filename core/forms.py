@@ -5,7 +5,7 @@ from django import forms
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.utils import timezone
-from .models import Event, Banner, SiteSettings, Expense, Coupon
+from .models import Event, Banner, SiteSettings, Expense, Coupon, Testimonial
 from .content import CONTENT, DEFAULT_TEXTS, FIELD_LABELS
 
 Image.MAX_IMAGE_PIXELS=20_000_000
@@ -192,3 +192,9 @@ class CustomerCodeForm(forms.Form):
         value=re.sub(r'\D','',self.cleaned_data['code'])
         if len(value)!=6: raise forms.ValidationError('Digite o código de 6 números.')
         return value
+
+class TestimonialForm(forms.ModelForm):
+    class Meta:
+        model=Testimonial
+        fields=['name','text','active','position']
+        widgets={'text':forms.Textarea(attrs={'rows':4})}
