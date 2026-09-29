@@ -1,4 +1,4 @@
-import hashlib, unicodedata
+import hashlib, unicodedata, json, urllib.request
 from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
@@ -10,8 +10,18 @@ from django.utils import timezone
 from .models import Event, Order, SiteSettings, AuditLog
 
 
+def send_whatsapp_notification(phone,body):
+    if not getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False): return False
+    try:
+        payload=json.dumps({'messaging_product':'whatsapp','to':phone,'type':'text','text':{'body':body}}).encode('utf-8')
+        request=urllib.request.Request(settings.WHATSAPP_API_URL,data=payload,method='POST',headers={'Authorization':f'Bearer {settings.WHATSAPP_API_TOKEN}','Content-Type':'application/json'})
+        with urllib.request.urlopen(request,timeout=8) as response:
+            return 200 <= response.status < 300
+    except Exception:
+        return False
+
 def notify_order(order_id,kind):
-    if not getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False): return False
+    if not (getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False) or getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False)): return False
     try:
         order=Order.objects.select_related('event').get(pk=order_id)
         url=f"{settings.SITE_URL}/pedido/{order.access_token}/"
@@ -24,8 +34,12 @@ def notify_order(order_id,kind):
             'ticket':('Ingresso disponível',f'Um ingresso oficial do pedido {order.code} já está disponível para download. Acesse a página privada do pedido: {url}'),
         }
         subject,body=messages.get(kind,('Atualização do pedido',f'Seu pedido {order.code} foi atualizado. Acompanhe em: {url}'))
-        send_mail(f'Resenha Morumbi • {subject}',body,settings.DEFAULT_FROM_EMAIL,[order.email],fail_silently=True)
-        return True
+        sent=False
+        if getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False):
+            send_mail(f'Resenha Morumbi • {subject}',body,settings.DEFAULT_FROM_EMAIL,[order.email],fail_silently=True)
+            sent=True
+        if send_whatsapp_notification(order.phone,body): sent=True
+        return sent
     except Exception:
         return False
 
