@@ -128,12 +128,15 @@ def order_detail(request,token):
             try:
                 report_receipt(order.pk,form.cleaned_data['receipt']); messages.success(request,'Comprovante enviado. Aguarde a conferência da equipe.'); return redirect('order',token=token)
             except ValidationError as exc: form.add_error(None,exc)
-    return render(request,'core/order.html',{
+    context={
         'order':order,
         'form':form,
         'pix':pix_payload(order) if order.status=='pending' and not order.expired else '',
         'automatic_payment':order.payment_provider in ['pagarme','mercadopago'],'payment_provider':order.payment_provider,
-    })
+    }
+    if context['automatic_payment'] and order.status=='pending' and not order.expired:
+        return render(request,'core/payment.html',context)
+    return render(request,'core/order.html',context)
 
 @never_cache
 def pix_qr(request,token):
