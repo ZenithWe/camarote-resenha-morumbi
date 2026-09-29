@@ -1,0 +1,55 @@
+{% extends 'core/base.html' %}{% load resenha icons %}
+{% block title %}Agenda | Resenha Morumbi{% endblock %}
+{% block content %}
+<section class="section public-agenda-page">
+  <div class="container">
+    <div class="page-heading public-page-heading">
+      <div><p class="eyebrow">{{ copy.agenda_eyebrow }}</p><h1>{{ copy.agenda_title }}</h1><p>{{ copy.agenda_description }}</p></div>
+      <a class="btn btn-light" href="/#agenda">{% icon 'chevron-left' %}Voltar ao início</a>
+    </div>
+    <div class="agenda-public-toolbar">
+      <div class="filter-tabs">
+        <a href="?ano={{ year }}&mes={{ month }}" class="{% if not category %}active{% endif %}">{% icon 'calendar' %}Todos</a>
+        <a href="?ano={{ year }}&mes={{ month }}&categoria=football" class="{% if category == 'football' %}active{% endif %}">{% icon 'ball' %}Jogos</a>
+        <a href="?ano={{ year }}&mes={{ month }}&categoria=concert" class="{% if category == 'concert' %}active{% endif %}">{% icon 'music' %}Shows</a>
+      </div>
+      <div class="calendar-nav public-calendar-nav">
+        <a class="icon-btn" aria-label="Mês anterior" href="?ano={{ prev_year }}&mes={{ prev_month }}{% if category %}&categoria={{ category }}{% endif %}">{% icon 'chevron-left' %}</a>
+        <h2>{{ month_name }} {{ year }}</h2>
+        <a class="icon-btn" aria-label="Próximo mês" href="?ano={{ next_year }}&mes={{ next_month }}{% if category %}&categoria={{ category }}{% endif %}">{% icon 'chevron-right' %}</a>
+      </div>
+    </div>
+    <div class="surface public-calendar-surface">
+      <div class="calendar-scroll">
+        <div class="calendar-grid">
+          <div class="weekday">DOM</div><div class="weekday">SEG</div><div class="weekday">TER</div><div class="weekday">QUA</div><div class="weekday">QUI</div><div class="weekday">SEX</div><div class="weekday">SÁB</div>
+          {% for week in weeks %}{% for day in week %}
+          <div class="calendar-day {% if not day.current %}outside{% endif %} {% if day.today %}today{% endif %}">
+            <span class="day-number">{{ day.date|date:'d' }}</span>
+            {% for event in day.events %}
+              <a href="{% url 'event_detail' event.pk %}" class="calendar-event {{ event.category }}">
+                <time>{{ event.starts_at|date:'H:i' }}</time>
+                <strong>{{ event.title }}</strong>
+                {% if event.doors_at %}<small>Camarote {{ event.doors_at|time:'H:i' }}</small>{% endif %}
+              </a>
+            {% endfor %}
+          </div>
+          {% endfor %}{% endfor %}
+        </div>
+      </div>
+    </div>
+    <section class="public-agenda-list">
+      <div class="surface-heading"><div><h2>Eventos deste mês</h2><p>{{ events|length }} evento{{ events|length|pluralize }}</p></div></div>
+      {% for event in events %}
+      <a class="agenda-list-item public-agenda-row" href="{% url 'event_detail' event.pk %}">
+        <div class="date-tile"><strong>{{ event.starts_at|date:'d' }}</strong><span>{{ event.starts_at|date:'M' }}</span></div>
+        <div><h3>{{ event.title }}</h3><p>{{ event.starts_at|date:'H:i' }} • entrada do camarote {% if event.doors_at %}{{ event.doors_at|time:'H:i' }}{% else %}a confirmar{% endif %} • {{ event.location }}</p></div>
+        <span class="badge {% if event.category == 'football' %}status-published{% else %}status-draft{% endif %}">{{ event.get_category_display }}</span>
+      </a>
+      {% empty %}
+      <div class="empty-state compact">{% icon 'calendar' %}<h3>Nenhum evento neste mês</h3><p>Use as setas acima para consultar os próximos meses.</p></div>
+      {% endfor %}
+    </section>
+  </div>
+</section>
+{% endblock %}
