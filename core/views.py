@@ -162,8 +162,11 @@ def dashboard(request):
     py,pm0=divmod(prev_index,12); pm=pm0+1
     previous_month=paid.filter(paid_at__year=py,paid_at__month=pm).aggregate(n=Sum('total'))['n'] or Decimal('0')
     monthly_change=None
+    monthly_change_label='Sem base de comparação no mês anterior'
     if previous_month:
         monthly_change=round(float((current_month-previous_month)/previous_month*100),1)
+        sign='+' if monthly_change>=0 else ''
+        monthly_change_label=f'{sign}{monthly_change}% comparado ao mês anterior'
     upcoming_qs=Event.objects.filter(status='published',starts_at__gte=timezone.now()).order_by('starts_at')
     capacity_total=sum(event.capacity for event in upcoming_qs)
     upcoming_sold=sum(event.sold for event in upcoming_qs)
@@ -180,7 +183,7 @@ def dashboard(request):
         'upcoming':Event.objects.filter(starts_at__gte=timezone.now()).order_by('starts_at')[:4],
         'review_count':Order.objects.filter(status='review').count(),'published_count':upcoming_qs.count(),
         'avg_ticket':avg_ticket,'occupancy_percent':occupancy_percent,'top_events':top_events,
-        'current_month':current_month,'previous_month':previous_month,'monthly_change':monthly_change,
+        'current_month':current_month,'previous_month':previous_month,'monthly_change':monthly_change,'monthly_change_label':monthly_change_label,
     })
 
 @operator_required
@@ -192,6 +195,7 @@ def production_status(request):
         {'label':'Uploads persistentes no S3','ok':getattr(settings,'S3_CONFIGURED',False),'detail':'Preserva fotos, comprovantes e ingressos entre deploys.'},
         {'label':'SECRET_KEY persistente','ok':getattr(settings,'SECRET_KEY_PERSISTENT',False),'detail':'Mantém sessões e tokens estáveis entre deploys.'},
         {'label':'E-mails transacionais','ok':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),'detail':'Reserva, pagamento e ingresso podem gerar avisos automáticos.'},
+        {'label':'WhatsApp transacional','ok':getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False),'detail':'Ativa avisos pelo canal oficial quando URL e token forem configurados.'},
         {'label':'Domínio próprio','ok':'onrender.com' not in getattr(settings,'SITE_URL',''),'detail':'Opcional durante testes; recomendado para operação comercial.'},
     ]
     return render(request,'panel/production.html',{
