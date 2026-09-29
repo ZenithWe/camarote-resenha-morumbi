@@ -3,8 +3,10 @@ from datetime import timedelta
 from decimal import Decimal
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.contrib.auth import get_user_model
+from django.urls import reverse
 from django.utils import timezone
-from .models import SiteSettings, Event, Coupon, EventTicket
+from .models import SiteSettings, Event, Coupon, EventTicket, Order
 from .services import create_order, assign_event_tickets, validate_mercadopago_webhook
 
 @override_settings(PAYMENT_PROVIDER='manual')
@@ -45,3 +47,55 @@ class MercadoPagoSignatureTests(TestCase):
         signature=hmac.new(b'segredo',manifest.encode(),hashlib.sha256).hexdigest()
         header=f'ts={ts},v1={signature}'
         self.assertTrue(validate_mercadopago_webhook(header,request_id,data_id))
+
+
+@override_settings(PAYMENT_PROVIDER='mercadopago',MERCADOPAGO_ACCESS_TOKEN='',MERCADOPAGO_CONFIGURED=False)
+class AdminTestModeFlowTests(TestCase):
+    def setUp(self):
+        SiteSettings.objects.create(pk=1,sales_enabled=False)
+        self.event=Event.objects.create(
+            title='[TESTE] Fluxo completo',description='Teste',category='football',
+            starts_at=timezone.now()+timedelta(days=7),price=Decimal('50.00'),
+            capacity=10,max_per_order=4,status='published'
+        )
+        self.admin=get_user_model().objects.create_superuser(username='admin-test',email='admin@example.com',password='Senha-forte-12345')
+        self.client.login(username='admin-test',password='Senha-forte-12345')
+
+    def test_admin_can_test_checkout_and_customer_login_without_external_credentials(self):
+        response=self.client.post(reverse('toggle_test_mode'),{'enabled':'1'})
+        self.assertEqual(response.status_code,302)
+        response=self.client.get(reverse('checkout',args=[self.event.pk]))
+        self.assertEqual(response.status_code,200)
+        session=self.client.session
+        request_key=session[f'checkout_{self.event.pk}']
+        response=self.client.post(reverse('checkout',args=[self.event.pk]),{
+            'customer_name':'Cliente de Teste',
+            'email':'cliente-teste@example.com',
+            'phone':'(11) 99999-9999',
+            'document':'',
+            'coupon_code':'',
+            'quantity':'1',
+            'terms':'on',
+            'request_key':request_key,
+            'website':'',
+        })
+        self.assertEqual(response.status_code,302)
+        order=Order.objects.get(email='cliente-teste@example.com')
+        self.assertEqual(order.payment_provider,'test')
+        self.assertEqual(order.status,'pending')
+        self.assertTrue(order.provider_pix_code.startswith('TESTE-'))
+
+        response=self.client.post(reverse('confirm_test_payment',args=[order.pk]))
+        self.assertEqual(response.status_code,302)
+        order.refresh_from_db()
+        self.assertEqual(order.status,'paid')
+        self.event.refresh_from_db()
+        self.assertEqual(self.event.sold,0)
+
+        response=self.client.post(reverse('customer_login'),{'email':'cliente-teste@example.com'})
+        self.assertEqual(response.status_code,302)
+        code=self.client.session.get('customer_test_code')
+        self.assertRegex(code,r'^\d{6}$')
+        response=self.client.post(reverse('customer_verify'),{'code':code})
+        self.assertEqual(response.status_code,302)
+        self.assertEqual(self.client.session.get('customer_email'),'cliente-teste@example.com')
