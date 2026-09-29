@@ -3,10 +3,31 @@ from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Sum, Q
 from django.utils import timezone
 from .models import Event, Order, SiteSettings, AuditLog
+
+
+def notify_order(order_id,kind):
+    if not getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False): return False
+    try:
+        order=Order.objects.select_related('event').get(pk=order_id)
+        url=f"{settings.SITE_URL}/pedido/{order.access_token}/"
+        messages={
+            'created':('Reserva criada',f'Sua reserva para {order.event.title} foi criada. O pedido {order.code} fica reservado até {timezone.localtime(order.expires_at).strftime("%d/%m/%Y %H:%M")}. Acompanhe e envie o comprovante em: {url}'),
+            'review':('Comprovante recebido',f'Recebemos o comprovante do pedido {order.code}. O pagamento está em análise. Acompanhe em: {url}'),
+            'paid':('Pagamento confirmado',f'O pagamento do pedido {order.code} para {order.event.title} foi confirmado. O ingresso oficial será disponibilizado na página do pedido: {url}'),
+            'cancelled':('Pedido cancelado',f'O pedido {order.code} foi cancelado. Se você já realizou o pagamento, entre em contato com a equipe. Consulte: {url}'),
+            'refunded':('Reembolso registrado',f'O reembolso do pedido {order.code} foi registrado pela equipe. Consulte os detalhes em: {url}'),
+            'ticket':('Ingresso disponível',f'Um ingresso oficial do pedido {order.code} já está disponível para download. Acesse a página privada do pedido: {url}'),
+        }
+        subject,body=messages.get(kind,('Atualização do pedido',f'Seu pedido {order.code} foi atualizado. Acompanhe em: {url}'))
+        send_mail(f'Resenha Morumbi • {subject}',body,settings.DEFAULT_FROM_EMAIL,[order.email],fail_silently=True)
+        return True
+    except Exception:
+        return False
 
 def log(user,action,obj=''):
     AuditLog.objects.create(user=user,action=action,object_id=str(obj))
@@ -31,7 +52,9 @@ def create_order(data,ip_hash):
     if quantity>event.capacity-occupied(event): raise ValidationError('Não há ingressos suficientes. Atualize a quantidade.')
     recent=Order.objects.filter(created_at__gte=timezone.now()-timedelta(hours=1)).filter(Q(ip_hash=ip_hash)|Q(email__iexact=data['email'])).count()
     if recent>=8: raise ValidationError('Limite temporário de pedidos. Aguarde uma hora ou entre em contato com a equipe.')
-    return Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],quantity=quantity,unit_price=event.price,total=event.price*quantity,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city})
+    order=Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],quantity=quantity,unit_price=event.price,total=event.price*quantity,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city})
+    transaction.on_commit(lambda: notify_order(order.pk,'created'))
+    return order
 
 @transaction.atomic
 def change_order(order_id,new_status,user,fee=Decimal('0')):
@@ -47,6 +70,7 @@ def change_order(order_id,new_status,user,fee=Decimal('0')):
     if new_status=='refunded': order.refunded_at=timezone.now()
     order.status=new_status; order.save()
     log(user,f'Pedido {order.code}: {new_status}',order.pk)
+    transaction.on_commit(lambda: notify_order(order.pk,new_status))
     return order
 
 @transaction.atomic
@@ -56,6 +80,7 @@ def report_receipt(order_id,receipt):
     order=Order.objects.select_for_update().get(pk=order_id)
     if order.status!='pending' or order.expired: raise ValidationError('O prazo desta reserva terminou ou o pedido já foi atualizado. Entre em contato com a equipe se você pagou.')
     order.receipt=receipt; order.status='review'; order.reported_at=timezone.now(); order.save()
+    transaction.on_commit(lambda: notify_order(order.pk,'review'))
     return order
 
 def pix_payload(order):
