@@ -47,6 +47,35 @@ def home(request):
         'upcoming_games':upcoming_games,
         'upcoming_shows':upcoming_shows,
     })
+def public_agenda(request):
+    today=timezone.localdate()
+    category=request.GET.get('categoria','')
+    if category not in ['football','concert']: category=''
+    try:
+        year=int(request.GET.get('ano',today.year)); month=int(request.GET.get('mes',today.month))
+        if not 2020<=year<=2100 or not 1<=month<=12: raise ValueError
+    except ValueError:
+        year,month=today.year,today.month
+    first=date(year,month,1)
+    next_month=date(year+1,1,1) if month==12 else date(year,month+1,1)
+    prev_date=first-timedelta(days=1)
+    qs=Event.objects.filter(status='published',starts_at__date__gte=first,starts_at__date__lt=next_month).order_by('starts_at')
+    if first.year==today.year and first.month==today.month:
+        qs=qs.filter(starts_at__gte=timezone.now())
+    if category: qs=qs.filter(category=category)
+    events=list(qs)
+    event_days={}
+    for event in events:
+        event_days.setdefault(timezone.localdate(event.starts_at),[]).append(event)
+    weeks=[]
+    for week in calendar.Calendar(firstweekday=6).monthdatescalendar(year,month):
+        weeks.append([{'date':day,'current':day.month==month,'today':day==today,'events':event_days.get(day,[])} for day in week])
+    month_name=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'][month-1]
+    return render(request,'core/agenda.html',{
+        'events':events,'weeks':weeks,'month_name':month_name,'year':year,'month':month,'category':category,
+        'next_year':next_month.year,'next_month':next_month.month,'prev_year':prev_date.year,'prev_month':prev_date.month,
+    })
+
 def event_detail(request,pk):
     event=get_object_or_404(Event,pk=pk,status='published')
     return render(request,'core/event.html',{'event':event})
