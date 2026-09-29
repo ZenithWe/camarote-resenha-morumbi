@@ -1,4 +1,4 @@
-import hashlib, unicodedata, json, urllib.request, urllib.error, base64
+import hashlib, hmac, unicodedata, json, urllib.request, urllib.error, base64
 from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
@@ -10,6 +10,117 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from .models import Event, Order, SiteSettings, AuditLog
 
+
+def mercadopago_request(method,path,payload=None,idempotency_key=None):
+    if not getattr(settings,'MERCADOPAGO_CONFIGURED',False):
+        raise ValidationError('Mercado Pago ainda não está configurado.')
+    headers={'Authorization':f'Bearer {settings.MERCADOPAGO_ACCESS_TOKEN}','Accept':'application/json'}
+    if idempotency_key: headers['X-Idempotency-Key']=str(idempotency_key)
+    body=None
+    if payload is not None:
+        body=json.dumps(payload).encode('utf-8')
+        headers['Content-Type']='application/json'
+    request=urllib.request.Request(f"{settings.MERCADOPAGO_API_BASE}{path}",data=body,method=method,headers=headers)
+    try:
+        with urllib.request.urlopen(request,timeout=15) as response:
+            raw=response.read().decode('utf-8')
+            return json.loads(raw) if raw else {}
+    except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError) as exc:
+        raise ValidationError('Não foi possível comunicar com o Mercado Pago. Tente novamente em instantes.') from exc
+
+def validate_mercadopago_webhook(x_signature,x_request_id,data_id):
+    secret=getattr(settings,'MERCADOPAGO_WEBHOOK_SECRET','')
+    if not secret: return True
+    if not x_signature or not x_request_id or not data_id: return False
+    parts={}
+    for item in x_signature.split(','):
+        if '=' in item:
+            key,value=item.split('=',1)
+            parts[key.strip()]=value.strip()
+    ts=parts.get('ts'); received=parts.get('v1')
+    if not ts or not received: return False
+    manifest=f"id:{str(data_id).lower()};request-id:{x_request_id};ts:{ts};"
+    expected=hmac.new(secret.encode('utf-8'),manifest.encode('utf-8'),hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected,received)
+
+def initialize_mercadopago_pix(order):
+    if order.payment_provider!='mercadopago': return order
+    names=order.customer_name.strip().split(' ',1)
+    payer={
+        'email':order.email,
+        'first_name':names[0][:60],
+        'identification':{'type':'CPF','number':order.customer_document},
+    }
+    if len(names)>1: payer['last_name']=names[1][:60]
+    payload={
+        'transaction_amount':float(order.total),
+        'description':order.event.title[:255],
+        'payment_method_id':'pix',
+        'date_of_expiration':timezone.localtime(order.expires_at).isoformat(),
+        'external_reference':str(order.pk),
+        'notification_url':f"{settings.SITE_URL}/webhooks/mercadopago/",
+        'payer':payer,
+    }
+    response=mercadopago_request('POST','/v1/payments',payload,idempotency_key=order.request_key)
+    transaction_data=((response.get('point_of_interaction') or {}).get('transaction_data') or {})
+    qr_code=transaction_data.get('qr_code') or ''
+    payment_id=response.get('id')
+    if not payment_id or not qr_code:
+        raise ValidationError('O Mercado Pago não retornou um Pix válido para este pedido.')
+    expires=parse_datetime(response.get('date_of_expiration') or '') if response.get('date_of_expiration') else None
+    order.provider_order_id=str(payment_id)
+    order.provider_status=(response.get('status') or 'pending').lower()
+    order.provider_pix_code=qr_code
+    if expires:
+        order.provider_expires_at=expires
+        if expires<order.expires_at: order.expires_at=expires
+    order.save(update_fields=['provider_order_id','provider_status','provider_pix_code','provider_expires_at','expires_at'])
+    return order
+
+def sync_mercadopago_payment(order_id,payment_id=None):
+    event_id=Order.objects.values_list('event_id',flat=True).get(pk=order_id)
+    with transaction.atomic():
+        event=Event.objects.select_for_update().get(pk=event_id)
+        order=Order.objects.select_for_update().get(pk=order_id)
+        if order.payment_provider!='mercadopago': return order
+        target=str(payment_id or order.provider_order_id or '')
+        if not target: return order
+        payment=mercadopago_request('GET',f"/v1/payments/{target}")
+        expected=order.total.quantize(Decimal('0.01'))
+        received=Decimal(str(payment.get('transaction_amount') or '0')).quantize(Decimal('0.01'))
+        external_reference=str(payment.get('external_reference') or '')
+        method=str(payment.get('payment_method_id') or '')
+        if received!=expected or external_reference!=str(order.pk) or method!='pix':
+            order.provider_status='verification_failed'
+            order.save(update_fields=['provider_status'])
+            log(None,'Mercado Pago: divergência na verificação',order.pk)
+            return order
+        if not order.provider_order_id:
+            order.provider_order_id=str(payment.get('id') or target)
+        status=(payment.get('status') or '').lower()
+        order.provider_status=status
+        notify=None
+        if status=='approved' and order.status in ['pending','review']:
+            if order.expired and occupied(event)+order.quantity>event.capacity:
+                order.status='review'
+                log(None,'Mercado Pago pago com estoque para revisão',order.pk)
+            else:
+                order.status='paid'
+                order.paid_at=timezone.now()
+                notify='paid'
+                log(None,'Mercado Pago confirmou pagamento',order.pk)
+        elif status in ['rejected','cancelled','canceled'] and order.status in ['pending','review']:
+            order.status='cancelled'
+            notify='cancelled'
+            log(None,'Mercado Pago informou falha/cancelamento',order.pk)
+        elif status in ['refunded','charged_back'] and order.status=='paid':
+            order.status='refunded'
+            order.refunded_at=timezone.now()
+            notify='refunded'
+            log(None,'Mercado Pago confirmou estorno',order.pk)
+        order.save(update_fields=['provider_order_id','provider_status','status','paid_at','refunded_at'])
+        if notify: transaction.on_commit(lambda oid=order.pk,kind=notify: notify_order(oid,kind))
+        return order
 
 def pagarme_request(method,path,payload=None):
     if not getattr(settings,'PAGARME_CONFIGURED',False):
@@ -142,7 +253,7 @@ def notify_order(order_id,kind):
     try:
         order=Order.objects.select_related('event').get(pk=order_id)
         url=f"{settings.SITE_URL}/pedido/{order.access_token}/"
-        created_body=(f'Sua reserva para {order.event.title} foi criada. O pedido {order.code} fica reservado até {timezone.localtime(order.expires_at).strftime("%d/%m/%Y %H:%M")}. Pague o Pix e acompanhe a confirmação automática em: {url}' if order.payment_provider=='pagarme' else f'Sua reserva para {order.event.title} foi criada. O pedido {order.code} fica reservado até {timezone.localtime(order.expires_at).strftime("%d/%m/%Y %H:%M")}. Acompanhe e envie o comprovante em: {url}')
+        created_body=(f'Sua reserva para {order.event.title} foi criada. O pedido {order.code} fica reservado até {timezone.localtime(order.expires_at).strftime("%d/%m/%Y %H:%M")}. Pague o Pix e acompanhe a confirmação automática em: {url}' if order.payment_provider in ['pagarme','mercadopago'] else f'Sua reserva para {order.event.title} foi criada. O pedido {order.code} fica reservado até {timezone.localtime(order.expires_at).strftime("%d/%m/%Y %H:%M")}. Acompanhe e envie o comprovante em: {url}')
         messages={
             'created':('Reserva criada',created_body),
             'review':('Comprovante recebido',f'Recebemos o comprovante do pedido {order.code}. O pagamento está em análise. Acompanhe em: {url}'),
@@ -178,7 +289,9 @@ def create_order(data,ip_hash):
     if existing: return existing
     cfg=SiteSettings.objects.get(pk=1)
     provider=getattr(settings,'PAYMENT_PROVIDER','manual')
-    gateway_ready=getattr(settings,'PAGARME_CONFIGURED',False) if provider=='pagarme' else all([cfg.pix_key,cfg.pix_name,cfg.pix_city])
+    if provider=='pagarme': gateway_ready=getattr(settings,'PAGARME_CONFIGURED',False)
+    elif provider=='mercadopago': gateway_ready=getattr(settings,'MERCADOPAGO_CONFIGURED',False)
+    else: gateway_ready=all([cfg.pix_key,cfg.pix_name,cfg.pix_city])
     if not cfg.sales_enabled or not gateway_ready: raise ValidationError('As vendas estão pausadas. Tente novamente mais tarde.')
     if event.status!='published' or event.is_past: raise ValidationError('Este evento não está disponível para compra.')
     quantity=data['quantity']
@@ -188,6 +301,7 @@ def create_order(data,ip_hash):
     if recent>=8: raise ValidationError('Limite temporário de pedidos. Aguarde uma hora ou entre em contato com a equipe.')
     order=Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],customer_document=data.get('document',''),payment_provider=provider,quantity=quantity,unit_price=event.price,total=event.price*quantity,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city} if provider!='pagarme' else {})
     if provider=='pagarme': initialize_pagarme_pix(order)
+    elif provider=='mercadopago': initialize_mercadopago_pix(order)
     transaction.on_commit(lambda: notify_order(order.pk,'created'))
     return order
 
@@ -196,7 +310,7 @@ def change_order(order_id,new_status,user,fee=Decimal('0')):
     event_id=Order.objects.values_list('event_id',flat=True).get(pk=order_id)
     event=Event.objects.select_for_update().get(pk=event_id)
     order=Order.objects.select_for_update().get(pk=order_id)
-    if order.payment_provider=='pagarme': raise ValidationError('O status deste pedido é controlado automaticamente pelo Pagar.me.')
+    if order.payment_provider in ['pagarme','mercadopago']: raise ValidationError('O status deste pedido é controlado automaticamente pelo gateway de pagamento.')
     transitions={'pending':{'paid','cancelled'},'review':{'paid','cancelled'},'paid':{'refunded'},'cancelled':set(),'refunded':set()}
     if new_status not in transitions.get(order.status,set()): raise ValidationError('Esta alteração não está disponível para a situação atual do pedido.')
     if new_status=='paid':
@@ -214,14 +328,14 @@ def report_receipt(order_id,receipt):
     event_id=Order.objects.values_list('event_id',flat=True).get(pk=order_id)
     Event.objects.select_for_update().get(pk=event_id)
     order=Order.objects.select_for_update().get(pk=order_id)
-    if order.payment_provider=='pagarme': raise ValidationError('Pedidos do Pagar.me não usam envio de comprovante.')
+    if order.payment_provider in ['pagarme','mercadopago']: raise ValidationError('Pedidos automáticos não usam envio de comprovante.')
     if order.status!='pending' or order.expired: raise ValidationError('O prazo desta reserva terminou ou o pedido já foi atualizado. Entre em contato com a equipe se você pagou.')
     order.receipt=receipt; order.status='review'; order.reported_at=timezone.now(); order.save()
     transaction.on_commit(lambda: notify_order(order.pk,'review'))
     return order
 
 def pix_payload(order):
-    if order.payment_provider=='pagarme': return order.provider_pix_code or ''
+    if order.payment_provider in ['pagarme','mercadopago']: return order.provider_pix_code or ''
     def field(id,val): return id+str(len(val.encode('utf-8'))).zfill(2)+val
     def ascii_text(value,length): return unicodedata.normalize('NFKD',value).encode('ascii','ignore').decode().upper()[:length]
     p=order.pix_snapshot
