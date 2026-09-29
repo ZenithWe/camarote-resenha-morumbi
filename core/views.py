@@ -25,7 +25,7 @@ from django.views.decorators.cache import never_cache
 from .models import Event, EventPhoto, Order, OrderTicket, EventTicket, Coupon, CustomerLoginCode, WebhookLog, Testimonial, Banner, SiteSettings, Expense, AuditLog
 from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, CouponForm, TicketInventoryUploadForm, CustomerEmailForm, CustomerCodeForm, TestimonialForm, clean_image
 from .content import CONTENT, DEFAULT_TEXTS
-from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook, assign_event_tickets, send_customer_login_code, customer_code_hash, email_shell
+from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook, assign_event_tickets, send_customer_login_code, customer_code_hash, email_shell, send_transactional_email
 
 logger=logging.getLogger(__name__)
 
@@ -403,7 +403,7 @@ def production_status(request):
         {'label':'Banco PostgreSQL','ok':not database_engine.endswith('sqlite3'),'detail':'Necessário para estoque e pedidos concorrentes.'},
         {'label':'Uploads persistentes no S3','ok':getattr(settings,'S3_CONFIGURED',False),'detail':'Preserva fotos, comprovantes e ingressos entre deploys.'},
         {'label':'SECRET_KEY persistente','ok':getattr(settings,'SECRET_KEY_PERSISTENT',False),'detail':'Mantém sessões e tokens estáveis entre deploys.'},
-        {'label':'Gmail / e-mails transacionais','ok':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),'detail':'Gmail SMTP preparado para códigos da Minha Conta, reserva, pagamento e ingresso.'},
+        {'label':'E-mails transacionais via API','ok':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),'detail':'Brevo via HTTPS para códigos da Minha Conta, reserva, pagamento e ingresso. Funciona no Render gratuito.'},
         {'label':'WhatsApp transacional','ok':getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False),'detail':'Ativa avisos pelo canal oficial quando URL e token forem configurados.'},
         {'label':'Mercado Pago automático','ok':getattr(settings,'MERCADOPAGO_CONFIGURED',False),'detail':'Gera Pix pela API e confirma o pagamento por webhook após consultar o pagamento no gateway.'},
         {'label':'Assinatura do webhook Mercado Pago','ok':bool(getattr(settings,'MERCADOPAGO_WEBHOOK_SECRET','')),'detail':'Valida a origem das notificações com a assinatura secreta do Mercado Pago.'},
@@ -414,7 +414,9 @@ def production_status(request):
         'site_url':getattr(settings,'SITE_URL',''),'payment_provider':getattr(settings,'PAYMENT_PROVIDER','manual'),'pagarme_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/pagarme/",'mercadopago_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/mercadopago/",
         'webhook_logs':WebhookLog.objects.all()[:12],
         'email_ready':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),
-        'email_host_configured':bool(getattr(settings,'EMAIL_HOST_USER','')),
+        'email_provider':getattr(settings,'EMAIL_PROVIDER','brevo'),
+        'email_sender_configured':bool(getattr(settings,'BREVO_SENDER_EMAIL','')) if getattr(settings,'EMAIL_PROVIDER','brevo')=='brevo' else bool(getattr(settings,'EMAIL_HOST_USER','')),
+        'email_api_key_configured':bool(getattr(settings,'BREVO_API_KEY','')) if getattr(settings,'EMAIL_PROVIDER','brevo')=='brevo' else bool(getattr(settings,'EMAIL_HOST_PASSWORD','')),
 
     })
 
@@ -422,32 +424,26 @@ def production_status(request):
 @require_POST
 def send_test_email(request):
     if not getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False):
-        messages.error(request,'O Gmail ainda não está completo. Configure EMAIL_HOST_USER e EMAIL_HOST_PASSWORD no Render.')
+        messages.error(request,'A API de e-mail ainda não está completa. Configure o remetente validado e a chave da Brevo no Render.')
         return redirect('production_status')
-    recipient=settings.EMAIL_HOST_USER
+    recipient=(getattr(settings,'BREVO_SENDER_EMAIL','') if getattr(settings,'EMAIL_PROVIDER','brevo')=='brevo' else getattr(settings,'EMAIL_HOST_USER',''))
     plain='Este é um e-mail de teste do Camarote Resenha Morumbi. Se você recebeu esta mensagem, o envio automático está funcionando.'
     html_body=email_shell('E-mail configurado com sucesso','O envio automático do site está funcionando.',[
         'Este é um teste enviado pela área administrativa.',
         'A partir de agora o site pode enviar códigos da Minha Conta e atualizações dos pedidos.'
     ],button_text='Abrir o site',button_url=settings.SITE_URL)
     try:
-        sent=send_mail('Resenha Morumbi • teste de e-mail',plain,settings.DEFAULT_FROM_EMAIL,[recipient],fail_silently=False,html_message=html_body)
+        sent=send_transactional_email('Resenha Morumbi • teste de e-mail',plain,recipient,html_body)
         if sent:
-            messages.success(request,'E-mail de teste enviado. Confira também Spam, Promoções e Lixeira.')
+            messages.success(request,'E-mail de teste enviado. Confira também Spam e Promoções.')
         else:
-            messages.error(request,'O Gmail não confirmou o envio. Confira a configuração SMTP.')
-    except smtplib.SMTPAuthenticationError:
-        logger.warning('Gmail SMTP: falha de autenticação')
-        messages.error(request,'O Gmail recusou o login. Ative a verificação em duas etapas e use uma SENHA DE APLICATIVO, não a senha normal da conta.')
-    except (smtplib.SMTPConnectError,smtplib.SMTPServerDisconnected,socket.timeout,TimeoutError):
-        logger.warning('Gmail SMTP: falha de conexão')
-        messages.error(request,'Não foi possível conectar ao Gmail agora. Tente novamente em alguns minutos.')
-    except smtplib.SMTPRecipientsRefused:
-        logger.warning('Gmail SMTP: destinatário recusado')
-        messages.error(request,'O Gmail recusou o destinatário do teste. Confira o endereço configurado.')
+            messages.error(request,'O serviço de e-mail não confirmou o envio.')
+    except ValidationError as exc:
+        logger.warning('Email API: falha de envio')
+        messages.error(request,' '.join(exc.messages))
     except Exception as exc:
-        logger.warning('Gmail SMTP: erro %s',exc.__class__.__name__)
-        messages.error(request,'Falha no envio pelo Gmail. O erro foi registrado sem expor sua senha.')
+        logger.warning('Email API: erro %s',exc.__class__.__name__)
+        messages.error(request,'Falha no envio pela API de e-mail. O erro foi registrado sem expor sua chave.')
     return redirect('production_status')
 
 @operator_required
