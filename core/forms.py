@@ -39,8 +39,8 @@ class EventForm(forms.ModelForm):
     event_time=forms.TimeField(label='Horário do evento',widget=forms.TimeInput(attrs={'type':'time'},format='%H:%M'),input_formats=['%H:%M'])
     class Meta:
         model=Event
-        fields=['title','description','category','price','capacity','max_per_order','ticket_source','ticket_source_notes','doors_at','location','includes','age_rules','cover','status','featured']
-        widgets={'description':forms.Textarea(attrs={'rows':5}),'includes':forms.Textarea(attrs={'rows':4}),'doors_at':forms.TimeInput(attrs={'type':'time'},format='%H:%M'),'price':forms.NumberInput(attrs={'step':'0.01','min':'1'}),'ticket_source_notes':forms.Textarea(attrs={'rows':2}),'cover':forms.ClearableFileInput(attrs={'accept':'image/jpeg,image/png,image/webp'})}
+        fields=['title','description','category','price','capacity','max_per_order','ticket_source','ticket_source_notes','doors_at','location','includes','food_info','drinks_info','parking_info','age_rules','cover','status','featured']
+        widgets={'description':forms.Textarea(attrs={'rows':5}),'includes':forms.Textarea(attrs={'rows':4}),'food_info':forms.Textarea(attrs={'rows':2}),'drinks_info':forms.Textarea(attrs={'rows':2}),'parking_info':forms.Textarea(attrs={'rows':2}),'doors_at':forms.TimeInput(attrs={'type':'time'},format='%H:%M'),'price':forms.NumberInput(attrs={'step':'0.01','min':'1'}),'ticket_source_notes':forms.Textarea(attrs={'rows':2}),'cover':forms.ClearableFileInput(attrs={'accept':'image/jpeg,image/png,image/webp'})}
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.fields['cover'].help_text='JPG, PNG ou WebP, até 8 MB. Formato horizontal recomendado.'
