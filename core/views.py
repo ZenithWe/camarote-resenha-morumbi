@@ -141,6 +141,11 @@ def order_detail(request,token):
     return render(request,'core/order.html',context)
 
 @never_cache
+def order_status(request,token):
+    order=get_object_or_404(Order,access_token=token)
+    return JsonResponse({'status':order.status,'display_status':order.display_status,'paid':order.status=='paid','ticket_count':order.assigned_tickets.count()+order.tickets.count()+(1 if order.official_ticket else 0)})
+
+@never_cache
 def pix_qr(request,token):
     import qrcode
     order=get_object_or_404(Order,access_token=token,status='pending')
@@ -448,7 +453,7 @@ def inventory_ticket_delete(request,pk):
 @operator_required
 def customers(request):
     selected=request.GET.get('cliente','').strip().lower()
-    qs=Order.objects.values('email').annotate(order_count=Count('id'),tickets=Sum('quantity'),spent=Sum('total')).order_by('-spent')
+    qs=Order.objects.values('email').annotate(order_count=Count('id'),tickets=Sum('quantity',filter=Q(status='paid')),spent=Sum('total',filter=Q(status='paid'))).order_by('-spent')
     selected_orders=Order.objects.select_related('event').filter(email__iexact=selected) if selected else None
     return render(request,'panel/customers.html',{'active':'customers','customers':qs,'selected_email':selected,'selected_orders':selected_orders})
 
