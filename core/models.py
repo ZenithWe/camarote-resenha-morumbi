@@ -64,9 +64,9 @@ class Event(models.Model):
         indexes=[models.Index(fields=['status','starts_at'])]
         constraints=[models.CheckConstraint(condition=Q(capacity__gte=1),name='event_capacity_positive'),models.CheckConstraint(condition=Q(price__gte=1),name='event_price_positive')]
     @property
-    def sold(self): return self.orders.filter(status='paid').aggregate(n=Sum('quantity'))['n'] or 0
+    def sold(self): return self.orders.filter(status='paid').exclude(payment_provider='test').aggregate(n=Sum('quantity'))['n'] or 0
     @property
-    def occupied(self): return self.orders.filter(Q(status__in=['paid','review'])|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('quantity'))['n'] or 0
+    def occupied(self): return self.orders.exclude(payment_provider='test').filter(Q(status__in=['paid','review'])|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('quantity'))['n'] or 0
     @property
     def available(self): return max(0,self.capacity-self.occupied)
     @property
@@ -103,7 +103,7 @@ class Coupon(models.Model):
     created_at=models.DateTimeField(auto_now_add=True)
     class Meta: ordering=['code']
     @property
-    def used(self): return self.orders.filter(status='paid').count()
+    def used(self): return self.orders.filter(status='paid').exclude(payment_provider='test').count()
     def __str__(self): return self.code
 
 class Testimonial(models.Model):
