@@ -376,9 +376,9 @@ def dashboard(request):
     upcoming_sold=sum(event.sold for event in upcoming_qs)
     occupancy_percent=round(upcoming_sold/capacity_total*100) if capacity_total else 0
     top_events=[]
-    for event in Event.objects.filter(orders__status='paid').distinct():
-        revenue=event.orders.filter(status='paid').aggregate(n=Sum('total'))['n'] or Decimal('0')
-        qty=event.orders.filter(status='paid').aggregate(n=Sum('quantity'))['n'] or 0
+    for event in Event.objects.filter(orders__status='paid').exclude(orders__payment_provider='test').distinct():
+        revenue=event.orders.filter(status='paid').exclude(payment_provider='test').aggregate(n=Sum('total'))['n'] or Decimal('0')
+        qty=event.orders.filter(status='paid').exclude(payment_provider='test').aggregate(n=Sum('quantity'))['n'] or 0
         top_events.append({'event':event,'revenue':revenue,'sold':qty})
     top_events=sorted(top_events,key=lambda item:item['revenue'],reverse=True)[:5]
     return render(request,'panel/dashboard.html',{
@@ -668,9 +668,9 @@ def finance(request):
     form=ExpenseForm(request.POST or None)
     if request.method=='POST' and form.is_valid():
         expense=form.save(commit=False); expense.created_by=request.user; expense.save(); log(request.user,'Saída financeira registrada',expense.pk); messages.success(request,'Lançamento registrado.'); return redirect('finance')
-    gross=Order.objects.filter(paid_at__isnull=False).aggregate(n=Sum('total'))['n'] or Decimal('0')
-    refunds=Order.objects.filter(status='refunded').aggregate(n=Sum('total'))['n'] or Decimal('0')
-    fees=Order.objects.filter(paid_at__isnull=False).aggregate(n=Sum('fee'))['n'] or Decimal('0')
+    gross=Order.objects.filter(paid_at__isnull=False).exclude(payment_provider='test').aggregate(n=Sum('total'))['n'] or Decimal('0')
+    refunds=Order.objects.filter(status='refunded').exclude(payment_provider='test').aggregate(n=Sum('total'))['n'] or Decimal('0')
+    fees=Order.objects.filter(paid_at__isnull=False).exclude(payment_provider='test').aggregate(n=Sum('fee'))['n'] or Decimal('0')
     expenses=Expense.objects.all(); outgoing=expenses.aggregate(n=Sum('amount'))['n'] or Decimal('0')
     return render(request,'panel/finance.html',{'active':'finance','form':form,'expenses':expenses,'gross':gross,'refunds':refunds,'fees':fees,'outgoing':outgoing,'balance':gross-refunds-fees-outgoing})
 
