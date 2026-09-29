@@ -55,7 +55,7 @@ def public_image(request,path):
 def checkout(request,pk):
     event=get_object_or_404(Event,pk=pk,status='published')
     session_key=f'checkout_{pk}'
-    if session_key not in request.session: request.session[session_key]=str(uuid.uuid4())
+    if request.method=='GET' or session_key not in request.session: request.session[session_key]=str(uuid.uuid4())
     form=CheckoutForm(request.POST or None,initial={'request_key':request.session[session_key]})
     form.fields['quantity'].max_value=event.max_per_order
     form.fields['quantity'].widget.attrs.update({'min':1,'max':event.max_per_order})

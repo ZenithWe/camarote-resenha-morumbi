@@ -114,6 +114,12 @@ class CoreFlows(TestCase):
         order=Order.objects.get();self.assertEqual(self.client.get(reverse('pix_qr',args=[order.access_token])).status_code,200)
         response=self.client.post(reverse('order',args=[order.access_token]),{'receipt':self.image()});self.assertEqual(response.status_code,302)
         self.assertContains(self.client.get(response.url),'Comprovante recebido')
+        self.client.get(reverse('checkout',args=[self.event.pk]))
+        new_key=self.client.session[f'checkout_{self.event.pk}']
+        self.assertNotEqual(key,new_key)
+        data.update(request_key=new_key,quantity=1)
+        self.assertEqual(self.client.post(reverse('checkout',args=[self.event.pk]),data).status_code,302)
+        self.assertEqual(Order.objects.count(),2)
     def test_all_management_pages_render(self):
         self.client.force_login(self.admin)
         for url in ['/painel/','/painel/eventos/','/painel/eventos/novo/','/painel/agenda/','/painel/pedidos/','/painel/financeiro/','/painel/banners/','/painel/banners/novo/','/painel/conteudo/','/painel/imagens/','/painel/configuracoes/','/painel/senha/']:
