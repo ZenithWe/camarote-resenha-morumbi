@@ -21,7 +21,7 @@ from django.views.decorators.cache import never_cache
 from .models import Event, EventPhoto, Order, OrderTicket, Banner, SiteSettings, Expense, AuditLog
 from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, clean_image
 from .content import CONTENT, DEFAULT_TEXTS
-from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied
+from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order
 
 operator_required=user_passes_test(lambda u:u.is_active and u.is_superuser,login_url='/painel/entrar/')
 class PanelLoginView(LoginView):
@@ -250,6 +250,7 @@ def panel_order(request,pk):
                 label=ticket_form.cleaned_data.get('label') or f'Ingresso {number}',
             )
             log(request.user,'Ingresso oficial anexado',ticket.pk)
+            transaction.on_commit(lambda: notify_order(order.pk,'ticket'))
             messages.success(request,'Ingresso disponibilizado na página privada do pedido.')
             return redirect('panel_order',pk=pk)
     elif request.method=='POST':
