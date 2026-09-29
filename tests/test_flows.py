@@ -92,7 +92,7 @@ class CoreFlows(TestCase):
     def test_editing_capacity_cannot_invalidate_reservations(self):
         self.create(quantity=3);self.client.force_login(self.admin)
         dt=timezone.localtime(self.event.starts_at)
-        data={'title':'Evento alterado','description':'Descrição','category':'football','price':'150.00','capacity':2,'max_per_order':8,'location':'MorumBIS','status':'published','event_date':dt.date().isoformat(),'event_time':dt.strftime('%H:%M')}
+        data={'title':'Evento alterado','description':'Descrição','category':'football','price':'150.00','capacity':2,'max_per_order':8,'ticket_source':'ticketmaster','ticket_source_notes':'Lote oficial','location':'MorumBIS','status':'published','event_date':dt.date().isoformat(),'event_time':dt.strftime('%H:%M')}
         response=self.client.post(reverse('event_edit',args=[self.event.pk]),data)
         self.assertContains(response,'não pode ficar abaixo');self.event.refresh_from_db();self.assertEqual(self.event.capacity,3)
     def test_settings_require_pix_and_banner_urls_safe(self):
