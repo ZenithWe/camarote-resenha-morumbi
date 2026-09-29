@@ -688,7 +688,7 @@ def banner_edit(request,pk=None):
     form=BannerForm(request.POST or None,request.FILES or None,instance=banner)
     if request.method=='POST' and form.is_valid():
         saved=form.save(); log(request.user,'Banner salvo',saved.pk); messages.success(request,'Banner salvo.'); return redirect('banners')
-    return render(request,'panel/generic_form.html',{'active':'banners','title':'Editar banner' if banner else 'Novo banner','form':form,'back':'banners','subtitle':'Os banners ativos aparecem no carrossel da página inicial.'})
+    return render(request,'panel/generic_form.html',{'active':'banners','title':'Editar banner' if banner else 'Novo banner','form':form,'back':'banners','subtitle':'Envie uma imagem horizontal para computadores e, se quiser, uma versão vertical específica para celulares. Se a versão mobile ficar vazia, o site usa a imagem de computador.'})
 @operator_required
 @require_POST
 def banner_delete(request,pk):
