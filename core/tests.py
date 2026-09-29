@@ -8,6 +8,7 @@ from django.urls import reverse
 from django.utils import timezone
 from .models import SiteSettings, Event, Coupon, EventTicket, Order
 from .services import create_order, assign_event_tickets, validate_mercadopago_webhook
+from .forms import EventForm
 
 @override_settings(PAYMENT_PROVIDER='manual')
 class CommerceTests(TestCase):
@@ -99,3 +100,47 @@ class AdminTestModeFlowTests(TestCase):
         response=self.client.post(reverse('customer_verify'),{'code':code})
         self.assertEqual(response.status_code,302)
         self.assertEqual(self.client.session.get('customer_email'),'cliente-teste@example.com')
+
+
+class EventCompetitionFormTests(TestCase):
+    def data(self, **extra):
+        dt=timezone.localtime(timezone.now()+timedelta(days=5))
+        values={
+            'title':'São Paulo x Adversário',
+            'description':'Jogo teste',
+            'category':'football',
+            'competition':'brasileirao',
+            'event_date':dt.date().isoformat(),
+            'event_time':dt.strftime('%H:%M'),
+            'price':'100.00',
+            'capacity':'50',
+            'max_per_order':'4',
+            'ticket_source':'spfc',
+            'ticket_source_notes':'',
+            'doors_at':'',
+            'location':'MorumBIS • São Paulo, SP',
+            'includes':'',
+            'food_info':'',
+            'drinks_info':'',
+            'parking_info':'',
+            'age_rules':'',
+            'status':'draft',
+            'featured':'',
+        }
+        values.update(extra)
+        return values
+
+    def test_football_requires_competition(self):
+        form=EventForm(data=self.data(competition=''))
+        self.assertFalse(form.is_valid())
+        self.assertIn('competition',form.errors)
+
+    def test_football_accepts_competition(self):
+        form=EventForm(data=self.data())
+        self.assertTrue(form.is_valid(),form.errors)
+
+    def test_concert_clears_competition(self):
+        form=EventForm(data=self.data(category='concert',competition='brasileirao'))
+        self.assertTrue(form.is_valid(),form.errors)
+        event=form.save(commit=False)
+        self.assertEqual(event.competition,'')
