@@ -293,7 +293,7 @@ def coupon_for_order(code,event,subtotal):
     if coupon.event_id and coupon.event_id!=event.pk: raise ValidationError('Este cupom não vale para este evento.')
     if coupon.valid_from and coupon.valid_from>now: raise ValidationError('Este cupom ainda não está válido.')
     if coupon.valid_until and coupon.valid_until<=now: raise ValidationError('Este cupom expirou.')
-    reserved=coupon.orders.filter(Q(status__in=['paid','review'])|Q(status='pending',expires_at__gt=now)).count()
+    reserved=coupon.orders.exclude(payment_provider='test').filter(Q(status__in=['paid','review'])|Q(status='pending',expires_at__gt=now)).count()
     if reserved>=coupon.max_uses: raise ValidationError('Este cupom atingiu o limite de usos.')
     if coupon.discount_type=='percent':
         discount=(subtotal*coupon.value/Decimal('100')).quantize(Decimal('0.01'))
@@ -342,23 +342,24 @@ def send_customer_login_code(email):
     return True
 
 def occupied(event):
-    return event.orders.filter(Q(status__in=['paid','review'])|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('quantity'))['n'] or 0
+    return event.orders.exclude(payment_provider='test').filter(Q(status__in=['paid','review'])|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('quantity'))['n'] or 0
 
 def fingerprint(request):
     return hashlib.sha256((settings.SECRET_KEY+request.META.get('REMOTE_ADDR','')).encode()).hexdigest()
 
 @transaction.atomic
-def create_order(data,ip_hash):
+def create_order(data,ip_hash,provider_override=None):
     # Lock the event before checking stock. Every stock-changing operation uses this same lock.
     event=Event.objects.select_for_update().get(pk=data['event_id'])
     existing=Order.objects.filter(request_key=data['request_key']).first()
     if existing: return existing
     cfg=SiteSettings.objects.get(pk=1)
-    provider=getattr(settings,'PAYMENT_PROVIDER','manual')
-    if provider=='pagarme': gateway_ready=getattr(settings,'PAGARME_CONFIGURED',False)
+    provider=provider_override or getattr(settings,'PAYMENT_PROVIDER','manual')
+    if provider=='test': gateway_ready=True
+    elif provider=='pagarme': gateway_ready=getattr(settings,'PAGARME_CONFIGURED',False)
     elif provider=='mercadopago': gateway_ready=getattr(settings,'MERCADOPAGO_CONFIGURED',False)
     else: gateway_ready=all([cfg.pix_key,cfg.pix_name,cfg.pix_city])
-    if not cfg.sales_enabled or not gateway_ready: raise ValidationError('As vendas estão pausadas. Tente novamente mais tarde.')
+    if provider!='test' and (not cfg.sales_enabled or not gateway_ready): raise ValidationError('As vendas estão pausadas. Tente novamente mais tarde.')
     if event.status!='published' or event.is_past: raise ValidationError('Este evento não está disponível para compra.')
     quantity=data['quantity']
     if quantity<1 or quantity>event.max_per_order: raise ValidationError(f'O limite por pedido é de {event.max_per_order} ingressos.')
@@ -368,9 +369,11 @@ def create_order(data,ip_hash):
     subtotal=event.price*quantity
     coupon,discount=coupon_for_order(data.get('coupon_code',''),event,subtotal)
     total=max(Decimal('0.01'),subtotal-discount)
-    order=Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],customer_document=data.get('document',''),payment_provider=provider,quantity=quantity,unit_price=event.price,total=total,discount_amount=discount,coupon=coupon,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city} if provider not in ['pagarme','mercadopago'] else {})
+    order=Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],customer_document=data.get('document',''),payment_provider=provider,quantity=quantity,unit_price=event.price,total=total,discount_amount=discount,coupon=coupon,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city} if provider not in ['pagarme','mercadopago','test'] else {})
     if provider=='pagarme': initialize_pagarme_pix(order)
     elif provider=='mercadopago': initialize_mercadopago_pix(order)
+    elif provider=='test':
+        order.provider_status='test_pending'; order.provider_pix_code=f'TESTE-{order.code}-{order.pk}'; order.save(update_fields=['provider_status','provider_pix_code'])
     transaction.on_commit(lambda: notify_order(order.pk,'created'))
     return order
 
@@ -406,7 +409,7 @@ def report_receipt(order_id,receipt):
     return order
 
 def pix_payload(order):
-    if order.payment_provider in ['pagarme','mercadopago']: return order.provider_pix_code or ''
+    if order.payment_provider in ['pagarme','mercadopago','test']: return order.provider_pix_code or ''
     def field(id,val): return id+str(len(val.encode('utf-8'))).zfill(2)+val
     def ascii_text(value,length): return unicodedata.normalize('NFKD',value).encode('ascii','ignore').decode().upper()[:length]
     p=order.pix_snapshot
