@@ -46,6 +46,7 @@ class EventForm(forms.ModelForm):
         super().__init__(*args,**kwargs)
         self.fields['cover'].help_text='JPG, PNG ou WebP, até 8 MB. Formato horizontal recomendado.'
         self.fields['competition'].required=False
+        self.fields['competition'].choices=[('', 'Selecione a competição')]+list(Event.COMPETITIONS)
         self.fields['competition'].help_text='Aparece somente quando a categoria escolhida é Futebol.'
         if self.instance and self.instance.pk and self.instance.starts_at:
             dt=timezone.localtime(self.instance.starts_at)
