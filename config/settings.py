@@ -1,4 +1,4 @@
-import os
+import os, sys, secrets
 from pathlib import Path
 from datetime import timedelta
 import dj_database_url
@@ -7,9 +7,31 @@ from django.core.exceptions import ImproperlyConfigured
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 DEBUG = os.getenv('DEBUG', '0') == '1'
+IS_COLLECTSTATIC = 'collectstatic' in sys.argv
 SECRET_KEY = os.getenv('SECRET_KEY', '')
 if len(SECRET_KEY) < 50:
-    raise ImproperlyConfigured('Defina SECRET_KEY com pelo menos 50 caracteres. Execute python setup_local.py para uso local.')
+    if DEBUG:
+        raise ImproperlyConfigured('Defina SECRET_KEY com pelo menos 50 caracteres. Execute python setup_local.py para uso local.')
+    # Fallback seguro para plataformas onde o segredo ainda não foi cadastrado:
+    # cria uma chave aleatória local, não versionada e reutilizada por todos os
+    # processos do mesmo deploy. Uma SECRET_KEY persistente no ambiente continua
+    # sendo a opção recomendada para evitar logout após um novo deploy.
+    secret_file = BASE_DIR / '.runtime-secret-key'
+    try:
+        SECRET_KEY = secret_file.read_text(encoding='utf-8').strip()
+    except (FileNotFoundError, OSError):
+        SECRET_KEY = ''
+    if len(SECRET_KEY) < 50:
+        generated = secrets.token_urlsafe(64)
+        try:
+            fd = os.open(secret_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+                handle.write(generated)
+            SECRET_KEY = generated
+        except FileExistsError:
+            SECRET_KEY = secret_file.read_text(encoding='utf-8').strip()
+    if len(SECRET_KEY) < 50:
+        raise ImproperlyConfigured('Não foi possível obter uma SECRET_KEY segura.')
 ALLOWED_HOSTS = [s.strip() for s in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if s.strip()]
 CSRF_TRUSTED_ORIGINS = [s.strip() for s in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',') if s.strip()]
 INSTALLED_APPS = ['django.contrib.admin','django.contrib.auth','django.contrib.contenttypes','django.contrib.sessions','django.contrib.messages','django.contrib.staticfiles','axes','core']
@@ -18,7 +40,7 @@ ROOT_URLCONF='config.urls'
 TEMPLATES=[{'BACKEND':'django.template.backends.django.DjangoTemplates','DIRS':[BASE_DIR/'templates'],'APP_DIRS':True,'OPTIONS':{'context_processors':['django.template.context_processors.request','django.contrib.auth.context_processors.auth','django.contrib.messages.context_processors.messages','core.context.site_context']}}]
 WSGI_APPLICATION='config.wsgi.application'
 DATABASES={'default':dj_database_url.config(default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',conn_max_age=60,conn_health_checks=True)}
-if not DEBUG and DATABASES['default']['ENGINE'].endswith('sqlite3'):
+if not DEBUG and not IS_COLLECTSTATIC and DATABASES['default']['ENGINE'].endswith('sqlite3'):
     raise ImproperlyConfigured('Em produção, configure DATABASE_URL com PostgreSQL para controle concorrente de estoque.')
 if DATABASES['default']['ENGINE'].endswith('sqlite3'):
     DATABASES['default']['OPTIONS']={'timeout':20}
@@ -68,7 +90,7 @@ if os.getenv('S3_BUCKET'):
     S3_OPTIONS={'bucket_name':os.environ['S3_BUCKET'],'endpoint_url':os.getenv('S3_ENDPOINT_URL') or None,'region_name':os.getenv('S3_REGION','us-east-1'),'access_key':os.environ['S3_ACCESS_KEY_ID'],'secret_key':os.environ['S3_SECRET_ACCESS_KEY'],'default_acl':None,'file_overwrite':False,'querystring_auth':True}
     STORAGES['default']={'BACKEND':'storages.backends.s3.S3Storage','OPTIONS':{**S3_OPTIONS,'location':'public-images'}}
     STORAGES['private']={'BACKEND':'storages.backends.s3.S3Storage','OPTIONS':{**S3_OPTIONS,'location':'private'}}
-elif not DEBUG and os.getenv('PERSISTENT_MEDIA','0')!='1':
+elif not DEBUG and not IS_COLLECTSTATIC and os.getenv('PERSISTENT_MEDIA','0')!='1':
     raise ImproperlyConfigured('Configure S3_BUCKET ou PERSISTENT_MEDIA=1 com disco persistente para preservar os uploads.')
 EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST=os.getenv('EMAIL_HOST','')
