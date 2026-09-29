@@ -20,10 +20,10 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.cache import never_cache
-from .models import Event, EventPhoto, Order, OrderTicket, Banner, SiteSettings, Expense, AuditLog
-from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, clean_image
+from .models import Event, EventPhoto, Order, OrderTicket, EventTicket, Coupon, CustomerLoginCode, WebhookLog, Banner, SiteSettings, Expense, AuditLog
+from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, CouponForm, TicketInventoryUploadForm, CustomerEmailForm, CustomerCodeForm, clean_image
 from .content import CONTENT, DEFAULT_TEXTS
-from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook
+from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook, assign_event_tickets, send_customer_login_code, customer_code_hash
 
 operator_required=user_passes_test(lambda u:u.is_active and u.is_superuser,login_url='/painel/entrar/')
 class PanelLoginView(LoginView):
@@ -34,7 +34,13 @@ class PanelLoginView(LoginView):
             form.add_error(None,'Esta conta não tem acesso ao painel.'); return self.form_invalid(form)
         return super().form_valid(form)
 
-def health(request): return JsonResponse({'status':'ok'})
+def health(request):
+    try:
+        from django.db import connection
+        with connection.cursor() as cursor: cursor.execute('SELECT 1')
+        db_ok=True
+    except Exception: db_ok=False
+    return JsonResponse({'status':'ok' if db_ok else 'degraded','database':db_ok,'payment_provider':getattr(settings,'PAYMENT_PROVIDER','manual')},status=200 if db_ok else 503)
 def home(request):
     category=request.GET.get('categoria','')
     upcoming=Event.objects.filter(status='published',starts_at__gt=timezone.now()).order_by('starts_at')
@@ -48,6 +54,8 @@ def home(request):
         'banners':Banner.objects.filter(active=True),
         'upcoming_games':upcoming_games,
         'upcoming_shows':upcoming_shows,
+        'next_event':upcoming.first(),
+        'low_stock_events':[e for e in upcoming[:12] if e.available<=max(5,int(e.capacity*0.15)) and e.available>0],
     })
 def public_agenda(request):
     today=timezone.localdate()
@@ -79,8 +87,9 @@ def public_agenda(request):
     })
 
 def event_detail(request,pk):
-    event=get_object_or_404(Event,pk=pk,status='published')
-    return render(request,'core/event.html',{'event':event})
+    event=get_object_or_404(Event.objects.prefetch_related('photos'),pk=pk,status='published')
+    canonical=f"{getattr(settings,'SITE_URL','')}{reverse('event_detail',args=[event.pk])}"
+    return render(request,'core/event.html',{'event':event,'canonical_url':canonical})
 def terms(request): return render(request,'core/terms.html')
 
 def public_image(request,path):
@@ -211,6 +220,53 @@ def ticket_file(request,token,pk):
     ticket=get_object_or_404(OrderTicket.objects.select_related('order'),pk=pk,order__access_token=token,order__status='paid')
     return FileResponse(ticket.file.open('rb'),as_attachment=True,filename=f'ingresso-{ticket.order.code}-{ticket.pk}.pdf',content_type='application/pdf')
 
+@never_cache
+def inventory_ticket_file(request,token,pk):
+    ticket=get_object_or_404(EventTicket.objects.select_related('order'),pk=pk,order__access_token=token,order__status='paid')
+    return FileResponse(ticket.file.open('rb'),as_attachment=True,filename=f'ingresso-{ticket.order.code}-{ticket.pk}.pdf',content_type='application/pdf')
+
+def customer_login(request):
+    if request.session.get('customer_email'): return redirect('customer_account')
+    form=CustomerEmailForm(request.POST or None)
+    if request.method=='POST' and form.is_valid():
+        email=form.cleaned_data['email'].lower()
+        if getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False):
+            try: send_customer_login_code(email)
+            except Exception: pass
+            request.session['customer_login_email']=email
+            messages.success(request,'Se houver pedidos nesse e-mail, enviamos um código de acesso.')
+            return redirect('customer_verify')
+        form.add_error(None,'O acesso por código estará disponível quando o e-mail profissional for configurado. Por enquanto, use o link privado do seu pedido.')
+    return render(request,'core/customer_login.html',{'form':form})
+
+def customer_verify(request):
+    email=request.session.get('customer_login_email')
+    if not email: return redirect('customer_login')
+    form=CustomerCodeForm(request.POST or None)
+    if request.method=='POST' and form.is_valid():
+        challenge=CustomerLoginCode.objects.filter(email__iexact=email,used_at__isnull=True,expires_at__gt=timezone.now()).first()
+        if challenge and challenge.attempts<5 and challenge.code_hash==customer_code_hash(email,form.cleaned_data['code']):
+            challenge.used_at=timezone.now(); challenge.save(update_fields=['used_at'])
+            request.session['customer_email']=email
+            request.session.pop('customer_login_email',None)
+            return redirect('customer_account')
+        if challenge:
+            challenge.attempts+=1; challenge.save(update_fields=['attempts'])
+        form.add_error('code','Código inválido ou expirado.')
+    return render(request,'core/customer_verify.html',{'form':form,'email':email})
+
+def customer_account(request):
+    email=request.session.get('customer_email')
+    if not email: return redirect('customer_login')
+    orders=Order.objects.select_related('event').prefetch_related('tickets','assigned_tickets').filter(email__iexact=email)
+    return render(request,'core/customer_account.html',{'orders':orders,'customer_email':email})
+
+@require_POST
+def customer_logout(request):
+    request.session.pop('customer_email',None)
+    request.session.pop('customer_login_email',None)
+    return redirect('home')
+
 @operator_required
 def dashboard(request):
     paid=Order.objects.filter(status='paid')
@@ -221,6 +277,10 @@ def dashboard(request):
     pending=Order.objects.filter(Q(status='review')|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('total'))['n'] or Decimal('0')
     sold=paid.aggregate(n=Sum('quantity'))['n'] or 0
     paid_orders=paid.count()
+    all_orders=Order.objects.count()
+    expired_orders=Order.objects.filter(status='pending',expires_at__lte=timezone.now()).count()
+    cancelled_orders=Order.objects.filter(status='cancelled').count()
+    conversion_rate=round(paid_orders/all_orders*100,1) if all_orders else 0
     paid_revenue=paid.aggregate(n=Sum('total'))['n'] or Decimal('0')
     avg_ticket=(paid_revenue/paid_orders) if paid_orders else Decimal('0')
     now=timezone.localdate()
@@ -259,6 +319,8 @@ def dashboard(request):
         'review_count':Order.objects.filter(status='review').count(),'published_count':upcoming_qs.count(),
         'avg_ticket':avg_ticket,'occupancy_percent':occupancy_percent,'top_events':top_events,
         'current_month':current_month,'previous_month':previous_month,'monthly_change':monthly_change,'monthly_change_label':monthly_change_label,
+        'all_orders':all_orders,'expired_orders':expired_orders,'cancelled_orders':cancelled_orders,'conversion_rate':conversion_rate,
+        'discount_total':paid.aggregate(n=Sum('discount_amount'))['n'] or Decimal('0'),
     })
 
 @operator_required
@@ -278,6 +340,7 @@ def production_status(request):
     return render(request,'panel/production.html',{
         'active':'production','checks':checks,'db_expires':getattr(settings,'PRODUCTION_DB_EXPIRES_AT',''),
         'site_url':getattr(settings,'SITE_URL',''),'payment_provider':getattr(settings,'PAYMENT_PROVIDER','manual'),'pagarme_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/pagarme/",'mercadopago_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/mercadopago/",
+        'webhook_logs':WebhookLog.objects.all()[:12],
     })
 
 @operator_required
@@ -309,6 +372,82 @@ def backup_export(request):
     response['Content-Disposition']=f'attachment; filename="resenha-backup-{timezone.localdate().isoformat()}.json"'
     log(request.user,'Backup administrativo exportado')
     return response
+
+@operator_required
+def coupons(request):
+    return render(request,'panel/coupons.html',{'active':'coupons','coupons':Coupon.objects.select_related('event').all()})
+
+@operator_required
+def coupon_edit(request,pk=None):
+    coupon=get_object_or_404(Coupon,pk=pk) if pk else None
+    form=CouponForm(request.POST or None,instance=coupon)
+    if request.method=='POST' and form.is_valid():
+        saved=form.save(); log(request.user,'Cupom salvo',saved.pk); messages.success(request,'Cupom salvo.'); return redirect('coupons')
+    return render(request,'panel/generic_form.html',{'active':'coupons','title':'Editar cupom' if coupon else 'Novo cupom','form':form,'back':'coupons','subtitle':'Defina desconto, validade, limite de usos e evento opcional.'})
+
+@operator_required
+@require_POST
+def coupon_delete(request,pk):
+    coupon=get_object_or_404(Coupon,pk=pk)
+    coupon.active=False; coupon.save(update_fields=['active']); log(request.user,'Cupom desativado',coupon.pk)
+    messages.success(request,'Cupom desativado.'); return redirect('coupons')
+
+@operator_required
+def ticket_inventory(request,pk):
+    event=get_object_or_404(Event,pk=pk)
+    form=TicketInventoryUploadForm()
+    if request.method=='POST':
+        files=request.FILES.getlist('files')
+        prefix=request.POST.get('label_prefix','').strip()
+        if not files:
+            messages.error(request,'Selecione pelo menos um PDF.')
+        elif len(files)>50:
+            messages.error(request,'Envie no máximo 50 PDFs por vez.')
+        else:
+            valid=[]
+            for f in files:
+                signature=f.read(5); f.seek(0)
+                if f.size>10*1024*1024 or signature!=b'%PDF-':
+                    messages.error(request,f'{f.name}: PDF inválido ou maior que 10 MB.'); valid=[]; break
+                valid.append(f)
+            if valid:
+                start=event.ticket_inventory.count()+1
+                for i,f in enumerate(valid,start=start):
+                    EventTicket.objects.create(event=event,file=f,label=f'{prefix} {i}'.strip() or f'Ingresso {i}')
+                log(request.user,f'{len(valid)} ingressos adicionados ao estoque',event.pk)
+                messages.success(request,f'{len(valid)} ingresso(s) adicionados ao estoque.')
+                return redirect('ticket_inventory',pk=event.pk)
+    inventory=event.ticket_inventory.select_related('order').all()
+    return render(request,'panel/ticket_inventory.html',{'active':'events','event':event,'form':form,'inventory':inventory,'available_count':inventory.filter(order__isnull=True).count(),'assigned_count':inventory.filter(order__isnull=False).count()})
+
+@operator_required
+@require_POST
+def inventory_ticket_delete(request,pk):
+    ticket=get_object_or_404(EventTicket,pk=pk)
+    event_pk=ticket.event_id
+    if ticket.order_id: messages.error(request,'Este ingresso já foi atribuído a um pedido.')
+    else:
+        ticket.file.delete(save=False); ticket.delete(); messages.success(request,'Ingresso removido do estoque.')
+    return redirect('ticket_inventory',pk=event_pk)
+
+@operator_required
+def customers(request):
+    selected=request.GET.get('cliente','').strip().lower()
+    qs=Order.objects.values('email').annotate(order_count=Count('id'),tickets=Sum('quantity'),spent=Sum('total')).order_by('-spent')
+    selected_orders=Order.objects.select_related('event').filter(email__iexact=selected) if selected else None
+    return render(request,'panel/customers.html',{'active':'customers','customers':qs,'selected_email':selected,'selected_orders':selected_orders})
+
+@operator_required
+@require_POST
+def sync_payment(request,pk):
+    order=get_object_or_404(Order,pk=pk)
+    try:
+        if order.payment_provider=='mercadopago': sync_mercadopago_payment(order.pk)
+        elif order.payment_provider=='pagarme': sync_pagarme_charge(order.pk)
+        else: raise ValidationError('Este pedido usa confirmação manual.')
+        messages.success(request,'Status consultado diretamente no gateway.')
+    except ValidationError as exc: messages.error(request,' '.join(exc.messages))
+    return redirect('panel_order',pk=pk)
 
 @operator_required
 def panel_events(request):
