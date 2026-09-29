@@ -50,7 +50,6 @@ def initialize_pagarme_pix(order):
             'email':order.email[:64],
             'type':'individual',
             'document':order.customer_document,
-            'document_type':'CPF',
             'phones':{
                 'mobile_phone':{
                     'country_code':'55',
@@ -70,7 +69,6 @@ def initialize_pagarme_pix(order):
             },
         }],
         'closed':True,
-        'metadata':{'local_order_id':str(order.pk)},
     }
     response=pagarme_request('POST','/orders',payload)
     charges=response.get('charges') or []
@@ -144,8 +142,9 @@ def notify_order(order_id,kind):
     try:
         order=Order.objects.select_related('event').get(pk=order_id)
         url=f"{settings.SITE_URL}/pedido/{order.access_token}/"
+        created_body=(f'Sua reserva para {order.event.title} foi criada. O pedido {order.code} fica reservado até {timezone.localtime(order.expires_at).strftime("%d/%m/%Y %H:%M")}. Pague o Pix e acompanhe a confirmação automática em: {url}' if order.payment_provider=='pagarme' else f'Sua reserva para {order.event.title} foi criada. O pedido {order.code} fica reservado até {timezone.localtime(order.expires_at).strftime("%d/%m/%Y %H:%M")}. Acompanhe e envie o comprovante em: {url}')
         messages={
-            'created':('Reserva criada',f'Sua reserva para {order.event.title} foi criada. O pedido {order.code} fica reservado até {timezone.localtime(order.expires_at).strftime("%d/%m/%Y %H:%M")}. Acompanhe e envie o comprovante em: {url}'),
+            'created':('Reserva criada',created_body),
             'review':('Comprovante recebido',f'Recebemos o comprovante do pedido {order.code}. O pagamento está em análise. Acompanhe em: {url}'),
             'paid':('Pagamento confirmado',f'O pagamento do pedido {order.code} para {order.event.title} foi confirmado. O ingresso oficial será disponibilizado na página do pedido: {url}'),
             'cancelled':('Pedido cancelado',f'O pedido {order.code} foi cancelado. Se você já realizou o pagamento, entre em contato com a equipe. Consulte: {url}'),
