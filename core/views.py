@@ -47,6 +47,45 @@ def health(request):
         db_ok=True
     except Exception: db_ok=False
     return JsonResponse({'status':'ok' if db_ok else 'degraded','database':db_ok,'payment_provider':getattr(settings,'PAYMENT_PROVIDER','manual')},status=200 if db_ok else 503)
+
+def _public_cors_json(payload,status=200,cache='no-store'):
+    response=JsonResponse(payload,status=status)
+    response['Access-Control-Allow-Origin']='*'
+    response['Access-Control-Allow-Methods']='GET, OPTIONS'
+    response['Cache-Control']=cache
+    response['Vary']='Origin'
+    return response
+
+def public_ping_api(request):
+    if request.method=='OPTIONS':
+        return _public_cors_json({'ok':True})
+    return _public_cors_json({'ok':True,'service':'resenha-morumbi'},cache='no-store')
+
+def public_render_api(request):
+    if request.method=='OPTIONS':
+        return _public_cors_json({'ok':True})
+    page=(request.GET.get('page') or 'home').strip().lower()
+    try:
+        if page=='home':
+            rendered=home(request)
+        elif page=='agenda':
+            rendered=public_agenda(request)
+        elif page=='event':
+            raw_pk=(request.GET.get('id') or '').strip()
+            try:
+                event_pk=uuid.UUID(raw_pk)
+            except (ValueError,AttributeError):
+                return _public_cors_json({'ok':False,'detail':'Evento inválido.'},status=400)
+            if not Event.objects.filter(pk=event_pk,status='published').exists():
+                return _public_cors_json({'ok':False,'detail':'Evento não encontrado.'},status=404)
+            rendered=event_detail(request,event_pk)
+        else:
+            return _public_cors_json({'ok':False,'detail':'Página inválida.'},status=400)
+    except Http404:
+        return _public_cors_json({'ok':False,'detail':'Conteúdo não encontrado.'},status=404)
+    html=rendered.content.decode(rendered.charset or 'utf-8')
+    return _public_cors_json({'ok':True,'page':page,'html':html},cache='no-store')
+
 def home(request):
     category=request.GET.get('categoria','')
     upcoming=Event.objects.filter(status='published',starts_at__gt=timezone.now()).order_by('starts_at')
