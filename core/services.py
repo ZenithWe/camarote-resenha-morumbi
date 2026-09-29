@@ -374,7 +374,7 @@ def create_order(data,ip_hash,provider_override=None):
     elif provider=='mercadopago': initialize_mercadopago_pix(order)
     elif provider=='test':
         order.provider_status='test_pending'; order.provider_pix_code=f'TESTE-{order.code}-{order.pk}'; order.save(update_fields=['provider_status','provider_pix_code'])
-    transaction.on_commit(lambda: notify_order(order.pk,'created'))
+    if provider!='test': transaction.on_commit(lambda: notify_order(order.pk,'created'))
     return order
 
 @transaction.atomic
@@ -392,9 +392,9 @@ def change_order(order_id,new_status,user,fee=Decimal('0')):
     if new_status=='refunded': order.refunded_at=timezone.now()
     order.status=new_status; order.save()
     log(user,f'Pedido {order.code}: {new_status}',order.pk)
-    transaction.on_commit(lambda: notify_order(order.pk,new_status))
-    if new_status=='paid': transaction.on_commit(lambda oid=order.pk: assign_event_tickets(oid))
-    if new_status in ['cancelled','refunded']: transaction.on_commit(lambda oid=order.pk: release_event_tickets(oid))
+    if order.payment_provider!='test': transaction.on_commit(lambda: notify_order(order.pk,new_status))
+    if new_status=='paid' and order.payment_provider!='test': transaction.on_commit(lambda oid=order.pk: assign_event_tickets(oid))
+    if new_status in ['cancelled','refunded'] and order.payment_provider!='test': transaction.on_commit(lambda oid=order.pk: release_event_tickets(oid))
     return order
 
 @transaction.atomic
