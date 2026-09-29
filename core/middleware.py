@@ -6,6 +6,6 @@ class SecurityHeadersMiddleware:
         response['Permissions-Policy']='camera=(), microphone=(), geolocation=()'
         if request.path.startswith(('/painel/','/pedido/','/checkout/','/admin/')):
             response['Cache-Control']='private, no-store, max-age=0'
-            response['Referrer-Policy']='no-referrer'
+            response['Referrer-Policy']='same-origin'
             response['X-Robots-Tag']='noindex, nofollow'
         return response
