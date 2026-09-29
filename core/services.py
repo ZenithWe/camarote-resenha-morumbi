@@ -99,6 +99,11 @@ def sync_mercadopago_payment(order_id,payment_id=None):
             order.provider_order_id=str(payment.get('id') or target)
         status=(payment.get('status') or '').lower()
         order.provider_status=status
+        fee_details=payment.get('fee_details') or []
+        try:
+            order.fee=sum((Decimal(str(item.get('amount') or '0')) for item in fee_details),Decimal('0')).quantize(Decimal('0.01'))
+        except Exception:
+            order.fee=Decimal('0')
         notify=None
         if status=='approved' and order.status in ['pending','review']:
             if order.expired and occupied(event)+order.quantity>event.capacity:
@@ -118,7 +123,7 @@ def sync_mercadopago_payment(order_id,payment_id=None):
             order.refunded_at=timezone.now()
             notify='refunded'
             log(None,'Mercado Pago confirmou estorno',order.pk)
-        order.save(update_fields=['provider_order_id','provider_status','status','paid_at','refunded_at'])
+        order.save(update_fields=['provider_order_id','provider_status','status','paid_at','refunded_at','fee'])
         if notify: transaction.on_commit(lambda oid=order.pk,kind=notify: notify_order(oid,kind))
         if status=='approved' and order.status=='paid': transaction.on_commit(lambda oid=order.pk: assign_event_tickets(oid))
         if status in ['refunded','charged_back','rejected','cancelled','canceled']: transaction.on_commit(lambda oid=order.pk: release_event_tickets(oid))
