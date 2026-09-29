@@ -93,12 +93,24 @@ if os.getenv('TRUST_PROXY','0')=='1':
 DATA_UPLOAD_MAX_MEMORY_SIZE=12*1024*1024
 FILE_UPLOAD_MAX_MEMORY_SIZE=2*1024*1024
 STORAGES={'default':{'BACKEND':'django.core.files.storage.FileSystemStorage'},'staticfiles':{'BACKEND':'whitenoise.storage.CompressedManifestStaticFilesStorage'},'private':{'BACKEND':'django.core.files.storage.FileSystemStorage','OPTIONS':{'location':PRIVATE_MEDIA_ROOT}}}
-if os.getenv('S3_BUCKET'):
-    S3_OPTIONS={'bucket_name':os.environ['S3_BUCKET'],'endpoint_url':os.getenv('S3_ENDPOINT_URL') or None,'region_name':os.getenv('S3_REGION','us-east-1'),'access_key':os.environ['S3_ACCESS_KEY_ID'],'secret_key':os.environ['S3_SECRET_ACCESS_KEY'],'default_acl':None,'file_overwrite':False,'querystring_auth':True}
+S3_REQUIRED=['S3_BUCKET','S3_ENDPOINT_URL','S3_ACCESS_KEY_ID','S3_SECRET_ACCESS_KEY']
+S3_CONFIGURED=all(os.getenv(key) for key in S3_REQUIRED)
+if S3_CONFIGURED:
+    S3_OPTIONS={
+        'bucket_name':os.environ['S3_BUCKET'],
+        'endpoint_url':os.environ['S3_ENDPOINT_URL'],
+        'region_name':os.getenv('S3_REGION','us-east-1'),
+        'access_key':os.environ['S3_ACCESS_KEY_ID'],
+        'secret_key':os.environ['S3_SECRET_ACCESS_KEY'],
+        'default_acl':None,
+        'file_overwrite':False,
+        'querystring_auth':True,
+        'addressing_style':'path',
+    }
     STORAGES['default']={'BACKEND':'storages.backends.s3.S3Storage','OPTIONS':{**S3_OPTIONS,'location':'public-images'}}
     STORAGES['private']={'BACKEND':'storages.backends.s3.S3Storage','OPTIONS':{**S3_OPTIONS,'location':'private'}}
 elif not DEBUG and not IS_COLLECTSTATIC and os.getenv('PERSISTENT_MEDIA','0')!='1':
-    raise ImproperlyConfigured('Configure S3_BUCKET ou PERSISTENT_MEDIA=1 com disco persistente para preservar os uploads.')
+    raise ImproperlyConfigured('Configure o armazenamento S3 ou PERSISTENT_MEDIA=1 com disco persistente para preservar os uploads.')
 EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST=os.getenv('EMAIL_HOST','')
 EMAIL_PORT=int(os.getenv('EMAIL_PORT','587'))
