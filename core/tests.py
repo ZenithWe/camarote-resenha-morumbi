@@ -58,8 +58,8 @@ class AdminTestModeFlowTests(TestCase):
             starts_at=timezone.now()+timedelta(days=7),price=Decimal('50.00'),
             capacity=10,max_per_order=4,status='published'
         )
-        self.admin=get_user_model().objects.create_superuser(username='admin-test',email='admin@example.com',password='Senha-forte-12345')
-        self.client.login(username='admin-test',password='Senha-forte-12345')
+        self.admin=get_user_model().objects.create_superuser(username='admin-test',email='admin@example.com',password=None)
+        self.client.force_login(self.admin,backend='django.contrib.auth.backends.ModelBackend')
 
     def test_admin_can_test_checkout_and_customer_login_without_external_credentials(self):
         response=self.client.post(reverse('toggle_test_mode'),{'enabled':'1'})
