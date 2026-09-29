@@ -23,7 +23,7 @@ from django.views.decorators.cache import never_cache
 from .models import Event, EventPhoto, Order, OrderTicket, Banner, SiteSettings, Expense, AuditLog
 from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, clean_image
 from .content import CONTENT, DEFAULT_TEXTS
-from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge
+from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook
 
 operator_required=user_passes_test(lambda u:u.is_active and u.is_superuser,login_url='/painel/entrar/')
 class PanelLoginView(LoginView):
@@ -96,7 +96,7 @@ def checkout(request,pk):
     event=get_object_or_404(Event,pk=pk,status='published')
     session_key=f'checkout_{pk}'
     if request.method=='GET' or session_key not in request.session: request.session[session_key]=str(uuid.uuid4())
-    form=CheckoutForm(request.POST or None,initial={'request_key':request.session[session_key]},require_document=getattr(settings,'PAYMENT_PROVIDER','manual')=='pagarme')
+    form=CheckoutForm(request.POST or None,initial={'request_key':request.session[session_key]},require_document=getattr(settings,'PAYMENT_PROVIDER','manual') in ['pagarme','mercadopago'])
     form.fields['quantity'].max_value=event.max_per_order
     form.fields['quantity'].widget.attrs.update({'min':1,'max':event.max_per_order})
     if request.method=='POST' and form.is_valid():
@@ -111,10 +111,10 @@ def checkout(request,pk):
 @never_cache
 def order_detail(request,token):
     order=get_object_or_404(Order.objects.select_related('event'),access_token=token)
-    form=ReceiptForm(request.POST or None,request.FILES or None) if order.payment_provider!='pagarme' else None
+    form=ReceiptForm(request.POST or None,request.FILES or None) if order.payment_provider not in ['pagarme','mercadopago'] else None
     if request.method=='POST':
-        if order.payment_provider=='pagarme':
-            return JsonResponse({'detail':'Pedidos Pagar.me são confirmados automaticamente.'},status=405)
+        if order.payment_provider in ['pagarme','mercadopago']:
+            return JsonResponse({'detail':'Pedidos automáticos são confirmados pelo gateway de pagamento.'},status=405)
         if form.is_valid():
             try:
                 report_receipt(order.pk,form.cleaned_data['receipt']); messages.success(request,'Comprovante enviado. Aguarde a conferência da equipe.'); return redirect('order',token=token)
@@ -123,7 +123,7 @@ def order_detail(request,token):
         'order':order,
         'form':form,
         'pix':pix_payload(order) if order.status=='pending' and not order.expired else '',
-        'automatic_payment':order.payment_provider=='pagarme',
+        'automatic_payment':order.payment_provider in ['pagarme','mercadopago'],'payment_provider':order.payment_provider,
     })
 
 @never_cache
@@ -155,6 +155,47 @@ def pagarme_webhook(request):
     if event_type in ['order.paid','order.payment_failed','order.canceled','charge.paid','charge.payment_failed','charge.refunded','charge.pending']:
         try:
             sync_pagarme_charge(order.pk)
+        except ValidationError:
+            return JsonResponse({'ok':False},status=502)
+    return JsonResponse({'ok':True})
+
+@csrf_exempt
+@require_POST
+def mercadopago_webhook(request):
+    if not getattr(settings,'MERCADOPAGO_CONFIGURED',False):
+        return JsonResponse({'ok':False},status=503)
+    try:
+        payload=json.loads(request.body.decode('utf-8')) if request.body else {}
+    except (ValueError,UnicodeDecodeError):
+        payload={}
+    event_type=str(request.GET.get('type') or payload.get('type') or '')
+    data=payload.get('data') or {}
+    payment_id=str(request.GET.get('data.id') or request.GET.get('id') or data.get('id') or '')
+    if event_type and event_type!='payment':
+        return JsonResponse({'ok':True})
+    if not payment_id:
+        return JsonResponse({'ok':True})
+    if not validate_mercadopago_webhook(
+        request.headers.get('x-signature',''),
+        request.headers.get('x-request-id',''),
+        payment_id,
+    ):
+        return JsonResponse({'ok':False},status=401)
+    order=Order.objects.filter(payment_provider='mercadopago',provider_order_id=payment_id).first()
+    if order is None:
+        try:
+            from .services import mercadopago_request
+            payment=mercadopago_request('GET',f"/v1/payments/{payment_id}")
+            external_reference=str(payment.get('external_reference') or '')
+            order=Order.objects.filter(payment_provider='mercadopago',pk=external_reference).first()
+            if order and not order.provider_order_id:
+                order.provider_order_id=payment_id
+                order.save(update_fields=['provider_order_id'])
+        except (ValidationError,ValueError):
+            return JsonResponse({'ok':True})
+    if order is not None:
+        try:
+            sync_mercadopago_payment(order.pk,payment_id=payment_id)
         except ValidationError:
             return JsonResponse({'ok':False},status=502)
     return JsonResponse({'ok':True})
@@ -230,12 +271,12 @@ def production_status(request):
         {'label':'SECRET_KEY persistente','ok':getattr(settings,'SECRET_KEY_PERSISTENT',False),'detail':'Mantém sessões e tokens estáveis entre deploys.'},
         {'label':'E-mails transacionais','ok':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),'detail':'Reserva, pagamento e ingresso podem gerar avisos automáticos.'},
         {'label':'WhatsApp transacional','ok':getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False),'detail':'Ativa avisos pelo canal oficial quando URL e token forem configurados.'},
-        {'label':'Pagar.me automático','ok':getattr(settings,'PAGARME_CONFIGURED',False),'detail':'Gera Pix pela API e confirma o pagamento por webhook após validação no gateway.'},
+        {'label':'Mercado Pago automático','ok':getattr(settings,'MERCADOPAGO_CONFIGURED',False),'detail':'Gera Pix pela API e confirma o pagamento por webhook após consultar o pagamento no gateway.'},
         {'label':'Domínio próprio','ok':'onrender.com' not in getattr(settings,'SITE_URL',''),'detail':'Opcional durante testes; recomendado para operação comercial.'},
     ]
     return render(request,'panel/production.html',{
         'active':'production','checks':checks,'db_expires':getattr(settings,'PRODUCTION_DB_EXPIRES_AT',''),
-        'site_url':getattr(settings,'SITE_URL',''),'payment_provider':getattr(settings,'PAYMENT_PROVIDER','manual'),'pagarme_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/pagarme/",
+        'site_url':getattr(settings,'SITE_URL',''),'payment_provider':getattr(settings,'PAYMENT_PROVIDER','manual'),'pagarme_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/pagarme/",'mercadopago_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/mercadopago/",
     })
 
 @operator_required
