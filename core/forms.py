@@ -78,7 +78,7 @@ class SettingsForm(forms.ModelForm):
         return val
     def clean(self):
         cleaned=super().clean()
-        if cleaned.get('sales_enabled') and getattr(settings,'PAYMENT_PROVIDER','manual')!='pagarme' and not all(cleaned.get(x) for x in ['pix_key','pix_name','pix_city']): raise forms.ValidationError('Preencha a chave Pix, o titular e a cidade antes de ativar as vendas.')
+        if cleaned.get('sales_enabled') and getattr(settings,'PAYMENT_PROVIDER','manual') not in ['pagarme','mercadopago'] and not all(cleaned.get(x) for x in ['pix_key','pix_name','pix_city']): raise forms.ValidationError('Preencha a chave Pix, o titular e a cidade antes de ativar as vendas.')
         return cleaned
 
 class MediaForm(forms.ModelForm):
