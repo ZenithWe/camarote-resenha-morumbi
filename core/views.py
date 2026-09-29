@@ -116,7 +116,7 @@ def checkout(request,pk):
     session_key=f'checkout_{pk}'
     if request.method=='GET' or session_key not in request.session: request.session[session_key]=str(uuid.uuid4())
     test_mode=is_admin_test_mode(request)
-    form=CheckoutForm(request.POST or None,initial={'request_key':request.session[session_key]},require_document=(getattr(settings,'PAYMENT_PROVIDER','manual') in ['pagarme','mercadopago'] and not test_mode))
+    form=CheckoutForm(request.POST or None,initial={'request_key':request.session[session_key]},require_document=(getattr(settings,'PAYMENT_PROVIDER','manual') in ['pagarme','mercadopago'] and not test_mode),test_mode=test_mode)
     form.fields['quantity'].max_value=event.max_per_order
     form.fields['quantity'].widget.attrs.update({'min':1,'max':event.max_per_order})
     if request.method=='POST' and form.is_valid():
