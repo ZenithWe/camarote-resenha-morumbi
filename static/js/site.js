@@ -23,3 +23,15 @@ $('#confirm-action')?.addEventListener('click',()=>{if(!activeForm)return;const 
 $$('[data-height]').forEach(bar=>bar.style.height=Math.max(1,Math.min(100,Number(bar.dataset.height)||0))+'%');
 $$('input[type=file][accept*="image"]').forEach(input=>input.addEventListener('change',()=>{const field=input.closest('.field');field?.querySelectorAll('.upload-preview').forEach(x=>{URL.revokeObjectURL(x.src);x.remove()});const files=[...input.files].slice(0,3);for(const file of files){if(!['image/jpeg','image/png','image/webp'].includes(file.type))continue;const img=document.createElement('img');img.className='upload-preview';img.alt='Prévia da imagem selecionada';img.src=URL.createObjectURL(file);field?.append(img)}}));
 const dateField=$('#id_event_date');if(dateField&&!dateField.value){const date=new URLSearchParams(location.search).get('dia');if(date&&/^\d{4}-\d{2}-\d{2}$/.test(date))dateField.value=date}
+
+$$('form[data-single-submit]').forEach(form=>form.addEventListener('submit',()=>{
+  if(form.dataset.submitting==='yes')return;
+  form.dataset.submitting='yes';
+  const button=$('button[type="submit"],button:not([type])',form);
+  if(button){
+    button.disabled=true;
+    button.setAttribute('aria-busy','true');
+    button.dataset.originalText=button.textContent;
+    button.textContent='Entrando...';
+  }
+}));
