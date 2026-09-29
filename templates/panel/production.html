@@ -1,0 +1,22 @@
+{% extends 'panel/base.html' %}{% load icons %}
+{% block paneltitle %}Produção{% endblock %}
+{% block panelcontent %}
+<div class="page-heading"><div><p class="eyebrow">PRONTO PARA OPERAR</p><h1>Produção e segurança</h1><p>Veja o que já está configurado e o que ainda depende de contratação ou credenciais externas.</p></div><a class="btn btn-primary" href="{% url 'backup_export' %}">{% icon 'download' %}Baixar backup</a></div>
+<div class="production-grid">
+  {% for item in checks %}
+  <article class="surface production-check {% if item.ok %}ok{% else %}pending{% endif %}">
+    <span class="production-status">{% if item.ok %}{% icon 'check' %}{% else %}{% icon 'info' %}{% endif %}</span>
+    <div><h2>{{ item.label }}</h2><p>{{ item.detail }}</p><strong>{% if item.ok %}Configurado{% else %}Pendente{% endif %}</strong></div>
+  </article>
+  {% endfor %}
+</div>
+<section class="surface production-note">
+  <div class="surface-heading"><div><h2>Infraestrutura atual</h2><p>Resumo do ambiente desta instalação.</p></div></div>
+  <dl class="order-details">
+    <div><dt>Endereço atual</dt><dd>{{ site_url }}</dd></div>
+    <div><dt>Banco gratuito atual</dt><dd>{% if db_expires %}expira em {{ db_expires }}{% else %}consulte o provedor{% endif %}</dd></div>
+    <div><dt>Backup administrativo</dt><dd>JSON com eventos, pedidos, lançamentos e textos — sem arquivos, senha ou chave Pix.</dd></div>
+  </dl>
+  <div class="message info">Antes de vendas reais, recomendamos domínio próprio, banco sem prazo de expiração e SMTP/e-mail profissional. Essas etapas exigem conta/contratação do cliente e não são ativadas automaticamente.</div>
+</section>
+{% endblock %}
