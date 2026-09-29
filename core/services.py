@@ -11,6 +11,57 @@ from django.utils.dateparse import parse_datetime
 from .models import Event, Order, SiteSettings, AuditLog, Coupon, EventTicket, CustomerLoginCode
 
 
+def brevo_request(payload):
+    if not getattr(settings,'BREVO_CONFIGURED',False):
+        raise ValidationError('A API de e-mail ainda não está configurada.')
+    body=json.dumps(payload).encode('utf-8')
+    request=urllib.request.Request(
+        f"{settings.BREVO_API_BASE}/smtp/email",
+        data=body,
+        method='POST',
+        headers={
+            'accept':'application/json',
+            'content-type':'application/json',
+            'api-key':settings.BREVO_API_KEY,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request,timeout=20) as response:
+            raw=response.read().decode('utf-8')
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        if exc.code in [401,403]:
+            raise ValidationError('A Brevo recusou a chave da API. Gere uma nova chave e atualize o Render.') from exc
+        if exc.code == 400:
+            raise ValidationError('A Brevo recusou o remetente ou os dados do e-mail. Verifique se o remetente está validado.') from exc
+        raise ValidationError('A Brevo recusou temporariamente o envio do e-mail.') from exc
+    except (urllib.error.URLError,TimeoutError,OSError) as exc:
+        raise ValidationError('Não foi possível conectar ao serviço de e-mail agora.') from exc
+    except ValueError as exc:
+        raise ValidationError('A resposta do serviço de e-mail não pôde ser processada.') from exc
+
+def send_transactional_email(subject,text_content,to_email,html_content=None,to_name=''):
+    provider=getattr(settings,'EMAIL_PROVIDER','brevo')
+    if provider=='brevo':
+        payload={
+            'sender':{
+                'email':settings.BREVO_SENDER_EMAIL,
+                'name':settings.BREVO_SENDER_NAME,
+            },
+            'to':[{'email':to_email,**({'name':to_name} if to_name else {})}],
+            'subject':subject,
+            'textContent':text_content,
+        }
+        if html_content:
+            payload['htmlContent']=html_content
+        result=brevo_request(payload)
+        return bool(result.get('messageId') or result == {})
+    if not getattr(settings,'SMTP_EMAIL_CONFIGURED',False):
+        raise ValidationError('O provedor de e-mail ainda não está configurado.')
+    return bool(send_mail(subject,text_content,settings.DEFAULT_FROM_EMAIL,[to_email],fail_silently=False,html_message=html_content))
+
+
+
 def mercadopago_request(method,path,payload=None,idempotency_key=None):
     if not getattr(settings,'MERCADOPAGO_CONFIGURED',False):
         raise ValidationError('Mercado Pago ainda não está configurado.')
@@ -284,8 +335,10 @@ def notify_order(order_id,kind):
         sent=False
         if getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False):
             html_body=email_shell(subject,f'Pedido #{order.code}',[body],button_text='Acompanhar pedido',button_url=url)
-            send_mail(f'Resenha Morumbi • {subject}',body,settings.DEFAULT_FROM_EMAIL,[order.email],fail_silently=True,html_message=html_body)
-            sent=True
+            try:
+                sent=send_transactional_email(f'Resenha Morumbi • {subject}',body,order.email,html_body,order.customer_name)
+            except ValidationError:
+                sent=False
         if send_whatsapp_notification(order.phone,body): sent=True
         return sent
     except Exception:
@@ -350,7 +403,7 @@ def send_customer_login_code(email):
     CustomerLoginCode.objects.create(email=email,code_hash=customer_code_hash(email,code),expires_at=timezone.now()+timedelta(minutes=10))
     plain=f'Seu código de acesso é {code}. Ele expira em 10 minutos.'
     html_body=email_shell('Seu código de acesso','Entre na sua conta com o código abaixo.',[f'Código: {code}','Ele expira em 10 minutos e funciona uma única vez.'],button_text='Abrir Minha Conta',button_url=f"{settings.SITE_URL}/minha-conta/codigo/")
-    send_mail('Resenha Morumbi • código de acesso',plain,settings.DEFAULT_FROM_EMAIL,[email],fail_silently=False,html_message=html_body)
+    send_transactional_email('Resenha Morumbi • código de acesso',plain,email,html_body)
     return True
 
 def occupied(event):
