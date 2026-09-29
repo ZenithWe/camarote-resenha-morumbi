@@ -8,6 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
 DEBUG = os.getenv('DEBUG', '0') == '1'
 IS_COLLECTSTATIC = 'collectstatic' in sys.argv
+SECRET_KEY_PERSISTENT=bool(os.getenv('SECRET_KEY','').strip())
 SECRET_KEY = os.getenv('SECRET_KEY', '')
 if len(SECRET_KEY) < 50:
     if DEBUG:
