@@ -272,6 +272,7 @@ def production_status(request):
         {'label':'E-mails transacionais','ok':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),'detail':'Reserva, pagamento e ingresso podem gerar avisos automáticos.'},
         {'label':'WhatsApp transacional','ok':getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False),'detail':'Ativa avisos pelo canal oficial quando URL e token forem configurados.'},
         {'label':'Mercado Pago automático','ok':getattr(settings,'MERCADOPAGO_CONFIGURED',False),'detail':'Gera Pix pela API e confirma o pagamento por webhook após consultar o pagamento no gateway.'},
+        {'label':'Assinatura do webhook Mercado Pago','ok':bool(getattr(settings,'MERCADOPAGO_WEBHOOK_SECRET','')),'detail':'Valida a origem das notificações com a assinatura secreta do Mercado Pago.'},
         {'label':'Domínio próprio','ok':'onrender.com' not in getattr(settings,'SITE_URL',''),'detail':'Opcional durante testes; recomendado para operação comercial.'},
     ]
     return render(request,'panel/production.html',{
