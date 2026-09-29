@@ -114,7 +114,10 @@ elif not DEBUG and not IS_COLLECTSTATIC and os.getenv('PERSISTENT_MEDIA','0')!='
 EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST=os.getenv('EMAIL_HOST','')
 EMAIL_PORT=int(os.getenv('EMAIL_PORT','587'))
-EMAIL_USE_TLS=True
+EMAIL_USE_TLS=os.getenv('EMAIL_USE_TLS','1')=='1'
 EMAIL_HOST_USER=os.getenv('EMAIL_HOST_USER','')
 EMAIL_HOST_PASSWORD=os.getenv('EMAIL_HOST_PASSWORD','')
 DEFAULT_FROM_EMAIL=os.getenv('DEFAULT_FROM_EMAIL','')
+EMAIL_NOTIFICATIONS_ENABLED=bool(EMAIL_HOST and DEFAULT_FROM_EMAIL)
+SITE_URL=os.getenv('SITE_URL','https://resenha-morumbi.onrender.com').rstrip('/')
+PRODUCTION_DB_EXPIRES_AT=os.getenv('PRODUCTION_DB_EXPIRES_AT','')
