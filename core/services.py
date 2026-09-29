@@ -1,4 +1,4 @@
-import hashlib, unicodedata, json, urllib.request
+import hashlib, unicodedata, json, urllib.request, urllib.error, base64
 from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
@@ -7,8 +7,127 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Sum, Q
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from .models import Event, Order, SiteSettings, AuditLog
 
+
+def pagarme_request(method,path,payload=None):
+    if not getattr(settings,'PAGARME_CONFIGURED',False):
+        raise ValidationError('Pagar.me ainda não está configurado.')
+    credentials=base64.b64encode(f"{settings.PAGARME_SECRET_KEY}:".encode('utf-8')).decode('ascii')
+    headers={'Authorization':f'Basic {credentials}','Accept':'application/json'}
+    body=None
+    if payload is not None:
+        body=json.dumps(payload).encode('utf-8')
+        headers['Content-Type']='application/json'
+    request=urllib.request.Request(f"{settings.PAGARME_API_BASE}{path}",data=body,method=method,headers=headers)
+    try:
+        with urllib.request.urlopen(request,timeout=15) as response:
+            raw=response.read().decode('utf-8')
+            return json.loads(raw) if raw else {}
+    except (urllib.error.HTTPError,urllib.error.URLError,TimeoutError,ValueError) as exc:
+        raise ValidationError('Não foi possível comunicar com o Pagar.me. Tente novamente em instantes.') from exc
+
+def initialize_pagarme_pix(order):
+    if order.payment_provider!='pagarme': return order
+    phone=''.join(ch for ch in order.phone if ch.isdigit())
+    if phone.startswith('55'): phone=phone[2:]
+    area_code=phone[:2]
+    number=phone[2:]
+    if len(area_code)!=2 or len(number) not in [8,9]:
+        raise ValidationError('O telefone informado não pôde ser enviado ao Pagar.me.')
+    unit_amount=int((order.unit_price*100).quantize(Decimal('1')))
+    payload={
+        'code':str(order.pk),
+        'items':[{
+            'amount':unit_amount,
+            'description':order.event.title[:255],
+            'quantity':order.quantity,
+            'code':str(order.event_id)[:52],
+        }],
+        'customer':{
+            'name':order.customer_name[:64],
+            'email':order.email[:64],
+            'type':'individual',
+            'document':order.customer_document,
+            'document_type':'CPF',
+            'phones':{
+                'mobile_phone':{
+                    'country_code':'55',
+                    'area_code':area_code,
+                    'number':number,
+                }
+            },
+        },
+        'payments':[{
+            'payment_method':'pix',
+            'pix':{
+                'expires_in':1800,
+                'additional_information':[
+                    {'name':'Pedido','value':order.code},
+                    {'name':'Evento','value':order.event.title[:50]},
+                ],
+            },
+        }],
+        'closed':True,
+        'metadata':{'local_order_id':str(order.pk)},
+    }
+    response=pagarme_request('POST','/orders',payload)
+    charges=response.get('charges') or []
+    charge=charges[0] if charges else {}
+    transaction_data=charge.get('last_transaction') or {}
+    qr_code=transaction_data.get('qr_code') or ''
+    if not response.get('id') or not charge.get('id') or not qr_code:
+        raise ValidationError('O Pagar.me não retornou um Pix válido para este pedido.')
+    expires=parse_datetime(transaction_data.get('expires_at') or '') if transaction_data.get('expires_at') else None
+    order.provider_order_id=response.get('id','')
+    order.provider_charge_id=charge.get('id','')
+    order.provider_transaction_id=transaction_data.get('id','')
+    order.provider_status=(charge.get('status') or response.get('status') or 'pending').lower()
+    order.provider_pix_code=qr_code
+    if expires:
+        order.provider_expires_at=expires
+        if expires<order.expires_at: order.expires_at=expires
+    order.save(update_fields=['provider_order_id','provider_charge_id','provider_transaction_id','provider_status','provider_pix_code','provider_expires_at','expires_at'])
+    return order
+
+def sync_pagarme_charge(order_id):
+    event_id=Order.objects.values_list('event_id',flat=True).get(pk=order_id)
+    with transaction.atomic():
+        event=Event.objects.select_for_update().get(pk=event_id)
+        order=Order.objects.select_for_update().get(pk=order_id)
+        if order.payment_provider!='pagarme' or not order.provider_charge_id: return order
+        charge=pagarme_request('GET',f"/charges/{order.provider_charge_id}")
+        expected=int((order.total*100).quantize(Decimal('1')))
+        if int(charge.get('amount') or 0)!=expected:
+            order.provider_status='amount_mismatch'
+            order.save(update_fields=['provider_status'])
+            log(None,'Pagar.me: divergência de valor',order.pk)
+            return order
+        status=(charge.get('status') or '').lower()
+        order.provider_status=status
+        notify=None
+        if status=='paid' and order.status in ['pending','review']:
+            if order.expired and occupied(event)+order.quantity>event.capacity:
+                order.status='review'
+                log(None,'Pagar.me pago com estoque para revisão',order.pk)
+            else:
+                order.status='paid'
+                order.paid_at=timezone.now()
+                notify='paid'
+                log(None,'Pagar.me confirmou pagamento',order.pk)
+        elif status in ['failed','canceled','cancelled'] and order.status in ['pending','review']:
+            order.status='cancelled'
+            notify='cancelled'
+            log(None,'Pagar.me informou falha/cancelamento',order.pk)
+        elif status=='refunded' and order.status=='paid':
+            order.status='refunded'
+            order.refunded_at=timezone.now()
+            notify='refunded'
+            log(None,'Pagar.me confirmou estorno',order.pk)
+        order.save(update_fields=['provider_status','status','paid_at','refunded_at'])
+        if notify: transaction.on_commit(lambda oid=order.pk,kind=notify: notify_order(oid,kind))
+        return order
 
 def send_whatsapp_notification(phone,body):
     if not getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False): return False
@@ -59,14 +178,17 @@ def create_order(data,ip_hash):
     existing=Order.objects.filter(request_key=data['request_key']).first()
     if existing: return existing
     cfg=SiteSettings.objects.get(pk=1)
-    if not cfg.sales_enabled or not all([cfg.pix_key,cfg.pix_name,cfg.pix_city]): raise ValidationError('As vendas estão pausadas. Tente novamente mais tarde.')
+    provider=getattr(settings,'PAYMENT_PROVIDER','manual')
+    gateway_ready=getattr(settings,'PAGARME_CONFIGURED',False) if provider=='pagarme' else all([cfg.pix_key,cfg.pix_name,cfg.pix_city])
+    if not cfg.sales_enabled or not gateway_ready: raise ValidationError('As vendas estão pausadas. Tente novamente mais tarde.')
     if event.status!='published' or event.is_past: raise ValidationError('Este evento não está disponível para compra.')
     quantity=data['quantity']
     if quantity<1 or quantity>event.max_per_order: raise ValidationError(f'O limite por pedido é de {event.max_per_order} ingressos.')
     if quantity>event.capacity-occupied(event): raise ValidationError('Não há ingressos suficientes. Atualize a quantidade.')
     recent=Order.objects.filter(created_at__gte=timezone.now()-timedelta(hours=1)).filter(Q(ip_hash=ip_hash)|Q(email__iexact=data['email'])).count()
     if recent>=8: raise ValidationError('Limite temporário de pedidos. Aguarde uma hora ou entre em contato com a equipe.')
-    order=Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],quantity=quantity,unit_price=event.price,total=event.price*quantity,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city})
+    order=Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],customer_document=data.get('document',''),payment_provider=provider,quantity=quantity,unit_price=event.price,total=event.price*quantity,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city} if provider!='pagarme' else {})
+    if provider=='pagarme': initialize_pagarme_pix(order)
     transaction.on_commit(lambda: notify_order(order.pk,'created'))
     return order
 
@@ -75,6 +197,7 @@ def change_order(order_id,new_status,user,fee=Decimal('0')):
     event_id=Order.objects.values_list('event_id',flat=True).get(pk=order_id)
     event=Event.objects.select_for_update().get(pk=event_id)
     order=Order.objects.select_for_update().get(pk=order_id)
+    if order.payment_provider=='pagarme': raise ValidationError('O status deste pedido é controlado automaticamente pelo Pagar.me.')
     transitions={'pending':{'paid','cancelled'},'review':{'paid','cancelled'},'paid':{'refunded'},'cancelled':set(),'refunded':set()}
     if new_status not in transitions.get(order.status,set()): raise ValidationError('Esta alteração não está disponível para a situação atual do pedido.')
     if new_status=='paid':
@@ -92,12 +215,14 @@ def report_receipt(order_id,receipt):
     event_id=Order.objects.values_list('event_id',flat=True).get(pk=order_id)
     Event.objects.select_for_update().get(pk=event_id)
     order=Order.objects.select_for_update().get(pk=order_id)
+    if order.payment_provider=='pagarme': raise ValidationError('Pedidos do Pagar.me não usam envio de comprovante.')
     if order.status!='pending' or order.expired: raise ValidationError('O prazo desta reserva terminou ou o pedido já foi atualizado. Entre em contato com a equipe se você pagou.')
     order.receipt=receipt; order.status='review'; order.reported_at=timezone.now(); order.save()
     transaction.on_commit(lambda: notify_order(order.pk,'review'))
     return order
 
 def pix_payload(order):
+    if order.payment_provider=='pagarme': return order.provider_pix_code or ''
     def field(id,val): return id+str(len(val.encode('utf-8'))).zfill(2)+val
     def ascii_text(value,length): return unicodedata.normalize('NFKD',value).encode('ascii','ignore').decode().upper()[:length]
     p=order.pix_snapshot
