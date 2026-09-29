@@ -35,6 +35,16 @@ class CoreFlows(TestCase):
     def test_csrf_prevents_forged_admin_writes(self):
         client=Client(enforce_csrf_checks=True);client.force_login(self.admin)
         self.assertEqual(client.post(reverse('event_delete',args=[self.event.pk])).status_code,403)
+    def test_admin_can_permanently_delete_event_with_orders(self):
+        order=self.create()
+        event_id=self.event.pk
+        order_id=order.pk
+        self.client.force_login(self.admin)
+        response=self.client.post(reverse('event_delete',args=[event_id]))
+        self.assertEqual(response.status_code,302)
+        self.assertFalse(Event.objects.filter(pk=event_id).exists())
+        self.assertFalse(Order.objects.filter(pk=order_id).exists())
+
     def test_idempotent_order_and_server_side_price(self):
         data=self.order_data(quantity=2,unit_price=Decimal('0.01'),total=Decimal('0.02'))
         a=create_order(data,'ip');b=create_order(data,'ip')
