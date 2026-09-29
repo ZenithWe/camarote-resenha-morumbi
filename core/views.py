@@ -20,8 +20,8 @@ from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.cache import never_cache
-from .models import Event, EventPhoto, Order, OrderTicket, EventTicket, Coupon, CustomerLoginCode, WebhookLog, Banner, SiteSettings, Expense, AuditLog
-from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, CouponForm, TicketInventoryUploadForm, CustomerEmailForm, CustomerCodeForm, clean_image
+from .models import Event, EventPhoto, Order, OrderTicket, EventTicket, Coupon, CustomerLoginCode, WebhookLog, Testimonial, Banner, SiteSettings, Expense, AuditLog
+from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, CouponForm, TicketInventoryUploadForm, CustomerEmailForm, CustomerCodeForm, TestimonialForm, clean_image
 from .content import CONTENT, DEFAULT_TEXTS
 from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook, assign_event_tickets, send_customer_login_code, customer_code_hash
 
@@ -56,6 +56,8 @@ def home(request):
         'upcoming_shows':upcoming_shows,
         'next_event':upcoming.first(),
         'low_stock_events':[e for e in upcoming[:12] if e.available<=max(5,int(e.capacity*0.15)) and e.available>0],
+        'testimonials':Testimonial.objects.filter(active=True)[:6],
+        'gallery_photos':EventPhoto.objects.select_related('event').filter(event__status='published').order_by('-id')[:6],
     })
 def public_agenda(request):
     today=timezone.localdate()
@@ -451,6 +453,24 @@ def sync_payment(request,pk):
         messages.success(request,'Status consultado diretamente no gateway.')
     except ValidationError as exc: messages.error(request,' '.join(exc.messages))
     return redirect('panel_order',pk=pk)
+
+@operator_required
+def testimonials(request):
+    return render(request,'panel/testimonials.html',{'active':'testimonials','testimonials':Testimonial.objects.all()})
+
+@operator_required
+def testimonial_edit(request,pk=None):
+    item=get_object_or_404(Testimonial,pk=pk) if pk else None
+    form=TestimonialForm(request.POST or None,instance=item)
+    if request.method=='POST' and form.is_valid():
+        saved=form.save(); log(request.user,'Depoimento salvo',saved.pk); messages.success(request,'Depoimento salvo.'); return redirect('testimonials')
+    return render(request,'panel/generic_form.html',{'active':'testimonials','title':'Editar depoimento' if item else 'Novo depoimento','form':form,'back':'testimonials','subtitle':'Cadastre apenas depoimentos reais autorizados para publicação.'})
+
+@operator_required
+@require_POST
+def testimonial_delete(request,pk):
+    item=get_object_or_404(Testimonial,pk=pk)
+    item.delete(); messages.success(request,'Depoimento removido.'); return redirect('testimonials')
 
 @operator_required
 def panel_events(request):
