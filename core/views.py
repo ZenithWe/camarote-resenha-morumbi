@@ -176,8 +176,6 @@ def pagarme_webhook(request):
 @csrf_exempt
 @require_POST
 def mercadopago_webhook(request):
-    if not getattr(settings,'MERCADOPAGO_CONFIGURED',False):
-        return JsonResponse({'ok':False},status=503)
     try:
         payload=json.loads(request.body.decode('utf-8')) if request.body else {}
     except (ValueError,UnicodeDecodeError):
@@ -185,15 +183,18 @@ def mercadopago_webhook(request):
     event_type=str(request.GET.get('type') or payload.get('type') or '')
     data=payload.get('data') or {}
     payment_id=str(request.GET.get('data.id') or request.GET.get('id') or data.get('id') or '')
+    entry=WebhookLog.objects.create(provider='mercadopago',external_id=payment_id,event_type=event_type,status='received')
+    if not getattr(settings,'MERCADOPAGO_CONFIGURED',False):
+        entry.status='ignored'; entry.detail='Gateway sem credencial'; entry.save(update_fields=['status','detail'])
+        return JsonResponse({'ok':False},status=503)
     if event_type and event_type!='payment':
+        entry.status='ignored'; entry.detail='Evento não financeiro'; entry.save(update_fields=['status','detail'])
         return JsonResponse({'ok':True})
     if not payment_id:
+        entry.status='ignored'; entry.detail='Sem id de pagamento'; entry.save(update_fields=['status','detail'])
         return JsonResponse({'ok':True})
-    if not validate_mercadopago_webhook(
-        request.headers.get('x-signature',''),
-        request.headers.get('x-request-id',''),
-        payment_id,
-    ):
+    if not validate_mercadopago_webhook(request.headers.get('x-signature',''),request.headers.get('x-request-id',''),payment_id):
+        entry.status='rejected'; entry.detail='Assinatura inválida'; entry.save(update_fields=['status','detail'])
         return JsonResponse({'ok':False},status=401)
     order=Order.objects.filter(payment_provider='mercadopago',provider_order_id=payment_id).first()
     if order is None:
@@ -203,15 +204,21 @@ def mercadopago_webhook(request):
             external_reference=str(payment.get('external_reference') or '')
             order=Order.objects.filter(payment_provider='mercadopago',pk=external_reference).first()
             if order and not order.provider_order_id:
-                order.provider_order_id=payment_id
-                order.save(update_fields=['provider_order_id'])
+                order.provider_order_id=payment_id; order.save(update_fields=['provider_order_id'])
         except (ValidationError,ValueError):
+            entry.status='error'; entry.detail='Falha ao consultar pagamento'; entry.save(update_fields=['status','detail'])
             return JsonResponse({'ok':True})
     if order is not None:
         try:
             sync_mercadopago_payment(order.pk,payment_id=payment_id)
+            entry.status='processed'; entry.detail=f'Pedido {order.code} sincronizado'
         except ValidationError:
+            entry.status='error'; entry.detail='Falha ao sincronizar pedido'
+            entry.save(update_fields=['status','detail'])
             return JsonResponse({'ok':False},status=502)
+    else:
+        entry.status='ignored'; entry.detail='Pedido local não encontrado'
+    entry.save(update_fields=['status','detail'])
     return JsonResponse({'ok':True})
 
 @never_cache
@@ -368,10 +375,13 @@ def backup_export(request):
         })
     expenses=[{'id':x.pk,'description':x.description,'amount':str(x.amount),'kind':x.kind,'date':x.date.isoformat()} for x in Expense.objects.all()]
     cfg=SiteSettings.objects.filter(pk=1).first()
+    coupons=[{'code':x.code,'discount_type':x.discount_type,'value':str(x.value),'event_id':str(x.event_id) if x.event_id else None,'max_uses':x.max_uses,'valid_from':x.valid_from.isoformat(),'valid_until':x.valid_until.isoformat() if x.valid_until else None,'active':x.active} for x in Coupon.objects.all()]
+    testimonials=[{'name':x.name,'text':x.text,'active':x.active,'position':x.position} for x in Testimonial.objects.all()]
+    ticket_inventory=[{'event_id':str(x.event_id),'label':x.label,'assigned_order_code':x.order.code if x.order_id else None} for x in EventTicket.objects.select_related('order').all()]
     data={
-        'generated_at':timezone.now().isoformat(),'version':1,
+        'generated_at':timezone.now().isoformat(),'version':2,
         'site':{'texts':cfg.texts if cfg else {},'instagram':cfg.instagram if cfg else '','whatsapp':cfg.whatsapp if cfg else '','contact_email':cfg.contact_email if cfg else '','sales_enabled':cfg.sales_enabled if cfg else False},
-        'events':events,'orders':orders,'expenses':expenses,
+        'events':events,'orders':orders,'expenses':expenses,'coupons':coupons,'testimonials':testimonials,'ticket_inventory':ticket_inventory,
     }
     response=HttpResponse(json.dumps(data,ensure_ascii=False,indent=2),content_type='application/json; charset=utf-8')
     response['Content-Disposition']=f'attachment; filename="resenha-backup-{timezone.localdate().isoformat()}.json"'
