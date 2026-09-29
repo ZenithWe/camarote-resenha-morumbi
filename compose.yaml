@@ -1,0 +1,35 @@
+services:
+  database:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: resenha
+      POSTGRES_USER: resenha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U resenha -d resenha]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+  web:
+    build: .
+    env_file: .env
+    environment:
+      DEBUG: "0"
+      DATABASE_URL: postgresql://resenha:${POSTGRES_PASSWORD}@database:5432/resenha
+      PERSISTENT_MEDIA: "1"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - public_images:/app/media
+      - private_files:/app/private-media
+    depends_on:
+      database:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  postgres_data:
+  public_images:
+  private_files:

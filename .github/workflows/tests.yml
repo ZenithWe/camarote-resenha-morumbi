@@ -1,0 +1,36 @@
+name: Django checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: resenha_test
+          POSTGRES_USER: resenha
+          POSTGRES_PASSWORD: ci-disposable-database
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U resenha -d resenha_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DEBUG: "1"
+      SECRET_KEY: "ci-only-disposable-key-not-for-production-012345678901234567890123456789"
+      DATABASE_URL: "postgresql://resenha:ci-disposable-database@localhost:5432/resenha_test"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python manage.py check
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py collectstatic --noinput
+      - run: python manage.py test tests --verbosity 2

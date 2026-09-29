@@ -1,0 +1,42 @@
+from django import template
+from django.utils.safestring import mark_safe
+register=template.Library()
+PATHS={
+ 'ticket':'<path d="M2 9V6a1 1 0 0 1 1-1h18a1 1 0 0 1 1 1v3a3 3 0 0 0 0 6v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-3a3 3 0 0 0 0-6Z"/><path d="M14 5v2m0 4v2m0 4v2"/>',
+ 'grid':'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+ 'calendar':'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18m-12 4h2m3 0h2m-7 3h2"/>',
+ 'wallet':'<path d="M20 8V5a2 2 0 0 0-2-2H5a3 3 0 0 0 0 6h15v12H5a3 3 0 0 1-3-3V6"/><path d="M16 13h6v4h-6z"/>',
+ 'image':'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+ 'text':'<path d="M4 5h16M12 5v15M8 20h8"/>',
+ 'settings':'<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 2 3 3-1 2 3h3l1-3 3-1 2-3-2-2 1-3-2-3-3 1-2-3z"/>',
+ 'external':'<path d="M15 3h6v6m0-6-9 9M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4"/>',
+ 'plus':'<path d="M12 5v14M5 12h14"/>',
+ 'chevron-left':'<path d="m15 18-6-6 6-6"/>',
+ 'chevron-right':'<path d="m9 18 6-6-6-6"/>',
+ 'clock':'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+ 'location':'<path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+ 'instagram':'<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/>',
+ 'music':'<path d="M9 18V5l12-2v13M9 9l12-2"/><ellipse cx="6" cy="18" rx="3" ry="3"/><ellipse cx="18" cy="16" rx="3" ry="3"/>',
+ 'ball':'<circle cx="12" cy="12" r="9"/><path d="m12 7 5 4-2 5H9l-2-5 5-4Zm0 0V3m5 8 4-1m-6 6 2 4m-8-4-2 4m0-9-4-1"/>',
+ 'users':'<circle cx="9" cy="7" r="4"/><path d="M2 21v-3a6 6 0 0 1 12 0v3m3-18a4 4 0 0 1 0 8m5 10v-3a6 6 0 0 0-4-5"/>',
+ 'check':'<path d="m5 12 4 4L19 6"/>',
+ 'shield':'<path d="m12 3 8 4v6c0 5-8 9-8 9s-8-4-8-9V7l8-4Z"/><path d="m8 12 3 3 5-6"/>',
+ 'search':'<circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/>',
+ 'edit':'<path d="m15 5 4 4M3 21l5-1L21 7a2.8 2.8 0 0 0-4-4L4 16l-1 5Z"/>',
+ 'trash':'<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/>',
+ 'download':'<path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/>',
+ 'upload':'<path d="M12 16V3m-5 5 5-5 5 5M5 16v5h14v-5"/>',
+ 'logout':'<path d="M9 3H3v18h6m5-14 5 5-5 5m-6-5h14"/>',
+ 'lock':'<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V6a4 4 0 0 1 8 0v4m-4 4v3"/>',
+ 'menu':'<path d="M4 6h16M4 12h16M4 18h16"/>',
+ 'close':'<path d="m6 6 12 12M6 18 18 6"/>',
+ 'copy':'<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V3H3v13h5"/>',
+ 'info':'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10h.01"/>',
+ 'sparkles':'<path d="m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3 3-6Z"/>',
+ 'mail':'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 5 9 8 9-8"/>',
+ 'phone':'<path d="M4 3h5l2 5-3 2a17 17 0 0 0 6 6l2-3 5 2v5a2 2 0 0 1-2 2C9 21 3 15 2 5a2 2 0 0 1 2-2Z"/>',
+ 'banner':'<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M2 15h20M6 8h6m-6 3h10"/>',
+ 'eye':'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+}
+@register.simple_tag
+def icon(name): return mark_safe('<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+PATHS.get(name,PATHS['ticket'])+'</svg>')
