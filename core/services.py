@@ -1,4 +1,4 @@
-import hashlib, hmac, unicodedata, json, urllib.request, urllib.error, base64
+import hashlib, hmac, secrets, unicodedata, json, urllib.request, urllib.error, base64
 from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
@@ -8,7 +8,7 @@ from django.db import transaction
 from django.db.models import Sum, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from .models import Event, Order, SiteSettings, AuditLog
+from .models import Event, Order, SiteSettings, AuditLog, Coupon, EventTicket, CustomerLoginCode
 
 
 def mercadopago_request(method,path,payload=None,idempotency_key=None):
@@ -120,6 +120,8 @@ def sync_mercadopago_payment(order_id,payment_id=None):
             log(None,'Mercado Pago confirmou estorno',order.pk)
         order.save(update_fields=['provider_order_id','provider_status','status','paid_at','refunded_at'])
         if notify: transaction.on_commit(lambda oid=order.pk,kind=notify: notify_order(oid,kind))
+        if status=='approved' and order.status=='paid': transaction.on_commit(lambda oid=order.pk: assign_event_tickets(oid))
+        if status in ['refunded','charged_back','rejected','cancelled','canceled']: transaction.on_commit(lambda oid=order.pk: release_event_tickets(oid))
         return order
 
 def pagarme_request(method,path,payload=None):
@@ -236,6 +238,8 @@ def sync_pagarme_charge(order_id):
             log(None,'Pagar.me confirmou estorno',order.pk)
         order.save(update_fields=['provider_status','status','paid_at','refunded_at'])
         if notify: transaction.on_commit(lambda oid=order.pk,kind=notify: notify_order(oid,kind))
+        if status=='paid' and order.status=='paid': transaction.on_commit(lambda oid=order.pk: assign_event_tickets(oid))
+        if status in ['refunded','failed','canceled','cancelled']: transaction.on_commit(lambda oid=order.pk: release_event_tickets(oid))
         return order
 
 def send_whatsapp_notification(phone,body):
@@ -275,6 +279,63 @@ def notify_order(order_id,kind):
 def log(user,action,obj=''):
     AuditLog.objects.create(user=user,action=action,object_id=str(obj))
 
+def coupon_for_order(code,event,subtotal):
+    code=(code or '').strip().upper()
+    if not code: return None,Decimal('0')
+    now=timezone.now()
+    coupon=Coupon.objects.select_for_update().filter(code=code,active=True).first()
+    if not coupon: raise ValidationError('Cupom inválido ou indisponível.')
+    if coupon.event_id and coupon.event_id!=event.pk: raise ValidationError('Este cupom não vale para este evento.')
+    if coupon.valid_from and coupon.valid_from>now: raise ValidationError('Este cupom ainda não está válido.')
+    if coupon.valid_until and coupon.valid_until<=now: raise ValidationError('Este cupom expirou.')
+    reserved=coupon.orders.filter(Q(status__in=['paid','review'])|Q(status='pending',expires_at__gt=now)).count()
+    if reserved>=coupon.max_uses: raise ValidationError('Este cupom atingiu o limite de usos.')
+    if coupon.discount_type=='percent':
+        discount=(subtotal*coupon.value/Decimal('100')).quantize(Decimal('0.01'))
+    else:
+        discount=min(subtotal,coupon.value)
+    return coupon,max(Decimal('0'),discount)
+
+def assign_event_tickets(order_id):
+    notify=False
+    with transaction.atomic():
+        order=Order.objects.select_for_update().select_related('event').get(pk=order_id)
+        if order.status!='paid': return 0
+        existing=order.assigned_tickets.count()+order.tickets.count()+(1 if order.official_ticket else 0)
+        needed=max(0,order.quantity-existing)
+        if needed<=0: return 0
+        available=list(EventTicket.objects.select_for_update().filter(event=order.event,order__isnull=True).order_by('id')[:needed])
+        for ticket in available:
+            ticket.order=order
+            ticket.assigned_at=timezone.now()
+            ticket.save(update_fields=['order','assigned_at'])
+        if available:
+            log(None,f'{len(available)} ingresso(s) atribuídos automaticamente',order.pk)
+        final_count=existing+len(available)
+        notify=bool(available) and final_count>=order.quantity
+    if notify: notify_order(order_id,'ticket')
+    return len(available)
+
+def release_event_tickets(order_id):
+    with transaction.atomic():
+        tickets=EventTicket.objects.select_for_update().filter(order_id=order_id)
+        count=tickets.count()
+        tickets.update(order=None,assigned_at=None)
+        return count
+
+def customer_code_hash(email,code):
+    return hmac.new(settings.SECRET_KEY.encode('utf-8'),f'{email.lower()}:{code}'.encode('utf-8'),hashlib.sha256).hexdigest()
+
+def send_customer_login_code(email):
+    email=email.strip().lower()
+    if not getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False): return False
+    if not Order.objects.filter(email__iexact=email).exists(): return True
+    code=f'{secrets.randbelow(1000000):06d}'
+    CustomerLoginCode.objects.filter(email__iexact=email,used_at__isnull=True).update(used_at=timezone.now())
+    CustomerLoginCode.objects.create(email=email,code_hash=customer_code_hash(email,code),expires_at=timezone.now()+timedelta(minutes=10))
+    send_mail('Resenha Morumbi • código de acesso',f'Seu código de acesso é {code}. Ele expira em 10 minutos.',settings.DEFAULT_FROM_EMAIL,[email],fail_silently=False)
+    return True
+
 def occupied(event):
     return event.orders.filter(Q(status__in=['paid','review'])|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('quantity'))['n'] or 0
 
@@ -299,7 +360,10 @@ def create_order(data,ip_hash):
     if quantity>event.capacity-occupied(event): raise ValidationError('Não há ingressos suficientes. Atualize a quantidade.')
     recent=Order.objects.filter(created_at__gte=timezone.now()-timedelta(hours=1)).filter(Q(ip_hash=ip_hash)|Q(email__iexact=data['email'])).count()
     if recent>=8: raise ValidationError('Limite temporário de pedidos. Aguarde uma hora ou entre em contato com a equipe.')
-    order=Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],customer_document=data.get('document',''),payment_provider=provider,quantity=quantity,unit_price=event.price,total=event.price*quantity,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city} if provider!='pagarme' else {})
+    subtotal=event.price*quantity
+    coupon,discount=coupon_for_order(data.get('coupon_code',''),event,subtotal)
+    total=max(Decimal('0.01'),subtotal-discount)
+    order=Order.objects.create(event=event,customer_name=data['customer_name'],email=data['email'].lower(),phone=data['phone'],customer_document=data.get('document',''),payment_provider=provider,quantity=quantity,unit_price=event.price,total=total,discount_amount=discount,coupon=coupon,expires_at=timezone.now()+timedelta(minutes=30),request_key=data['request_key'],ip_hash=ip_hash,pix_snapshot={'key':cfg.pix_key,'name':cfg.pix_name,'city':cfg.pix_city} if provider not in ['pagarme','mercadopago'] else {})
     if provider=='pagarme': initialize_pagarme_pix(order)
     elif provider=='mercadopago': initialize_mercadopago_pix(order)
     transaction.on_commit(lambda: notify_order(order.pk,'created'))
@@ -321,6 +385,8 @@ def change_order(order_id,new_status,user,fee=Decimal('0')):
     order.status=new_status; order.save()
     log(user,f'Pedido {order.code}: {new_status}',order.pk)
     transaction.on_commit(lambda: notify_order(order.pk,new_status))
+    if new_status=='paid': transaction.on_commit(lambda oid=order.pk: assign_event_tickets(oid))
+    if new_status in ['cancelled','refunded']: transaction.on_commit(lambda oid=order.pk: release_event_tickets(oid))
     return order
 
 @transaction.atomic
