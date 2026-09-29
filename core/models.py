@@ -90,6 +90,22 @@ class Banner(models.Model):
     class Meta: ordering=['position','id']
     def __str__(self): return self.title
 
+class Coupon(models.Model):
+    TYPES=[('percent','Percentual'),('fixed','Valor fixo')]
+    code=models.CharField('código',max_length=40,unique=True)
+    discount_type=models.CharField('tipo de desconto',max_length=10,choices=TYPES,default='percent')
+    value=models.DecimalField('valor',max_digits=10,decimal_places=2,validators=[MinValueValidator(Decimal('0.01'))])
+    event=models.ForeignKey(Event,on_delete=models.CASCADE,null=True,blank=True,related_name='coupons')
+    max_uses=models.PositiveIntegerField('limite de usos',default=100,validators=[MinValueValidator(1)])
+    valid_from=models.DateTimeField('válido a partir de',default=timezone.now)
+    valid_until=models.DateTimeField('válido até',null=True,blank=True)
+    active=models.BooleanField('ativo',default=True)
+    created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=['code']
+    @property
+    def used(self): return self.orders.filter(status='paid').count()
+    def __str__(self): return self.code
+
 class Order(models.Model):
     STATUSES=[('pending','Aguardando pagamento'),('review','Em análise'),('paid','Confirmado'),('cancelled','Cancelado'),('refunded','Reembolsado')]
     id=models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False)
@@ -109,6 +125,8 @@ class Order(models.Model):
     quantity=models.PositiveSmallIntegerField(validators=[MinValueValidator(1),MaxValueValidator(20)])
     unit_price=models.DecimalField(max_digits=10,decimal_places=2)
     total=models.DecimalField(max_digits=12,decimal_places=2)
+    discount_amount=models.DecimalField(max_digits=12,decimal_places=2,default=0,validators=[MinValueValidator(0)])
+    coupon=models.ForeignKey('Coupon',on_delete=models.SET_NULL,null=True,blank=True,related_name='orders')
     status=models.CharField(max_length=16,choices=STATUSES,default='pending')
     expires_at=models.DateTimeField()
     created_at=models.DateTimeField(auto_now_add=True)
@@ -140,6 +158,36 @@ class OrderTicket(models.Model):
     created_at=models.DateTimeField(auto_now_add=True)
     class Meta: ordering=['id']
     def __str__(self): return self.label or f'Ingresso {self.pk}'
+
+class EventTicket(models.Model):
+    event=models.ForeignKey(Event,on_delete=models.CASCADE,related_name='ticket_inventory')
+    file=models.FileField('ingresso oficial',upload_to=ticket_path,storage=private_storage)
+    label=models.CharField('identificação',max_length=80,blank=True)
+    order=models.ForeignKey(Order,on_delete=models.SET_NULL,null=True,blank=True,related_name='assigned_tickets')
+    assigned_at=models.DateTimeField(null=True,blank=True)
+    created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=['id']
+    @property
+    def assigned(self): return bool(self.order_id)
+    def __str__(self): return self.label or f'Ingresso do evento {self.event_id}'
+
+class CustomerLoginCode(models.Model):
+    email=models.EmailField(db_index=True)
+    code_hash=models.CharField(max_length=64)
+    expires_at=models.DateTimeField()
+    attempts=models.PositiveSmallIntegerField(default=0)
+    used_at=models.DateTimeField(null=True,blank=True)
+    created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=['-created_at']
+
+class WebhookLog(models.Model):
+    provider=models.CharField(max_length=30)
+    external_id=models.CharField(max_length=100,blank=True)
+    event_type=models.CharField(max_length=80,blank=True)
+    status=models.CharField(max_length=30,default='received')
+    detail=models.CharField(max_length=240,blank=True)
+    created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=['-created_at']
 
 class Expense(models.Model):
     TYPES=[('expense','Despesa'),('withdrawal','Retirada')]
