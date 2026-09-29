@@ -191,3 +191,17 @@
   .test-control-card .actions .btn,.test-control-card .actions form{width:100%}
   .test-control-card .actions form .btn{width:100%}
 }
+
+/* Banners responsivos desktop e mobile */
+.banner-manager{display:grid;grid-template-columns:minmax(300px,.9fr) 1.1fr;gap:24px;align-items:center}
+.banner-preview-grid{display:grid;grid-template-columns:1.55fr .75fr;gap:12px}
+.banner-preview-grid figure{margin:0;position:relative;overflow:hidden;border-radius:10px;background:#f1f2f4;border:1px solid var(--border);min-height:180px}
+.banner-preview-grid figure>span{position:absolute;z-index:2;left:10px;top:10px;background:#111c;color:#fff;padding:5px 8px;border-radius:5px;font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em}
+.banner-preview-grid img{width:100%;height:100%;min-height:180px;object-fit:cover;display:block}
+.banner-preview-grid figure:last-child img{aspect-ratio:.8}
+.banner-mobile-fallback{height:100%;min-height:180px;display:grid;place-items:center;text-align:center;padding:20px;color:var(--muted);font-size:.78rem}
+@media(max-width:760px){
+  .banner-manager{grid-template-columns:1fr}
+  .banner-preview-grid{grid-template-columns:1fr .72fr}
+  .hero-image{object-position:center center}
+}
