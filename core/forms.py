@@ -5,7 +5,7 @@ from django import forms
 from django.conf import settings
 from django.core.files.base import ContentFile
 from django.utils import timezone
-from .models import Event, Banner, SiteSettings, Expense
+from .models import Event, Banner, SiteSettings, Expense, Coupon
 from .content import CONTENT, DEFAULT_TEXTS, FIELD_LABELS
 
 Image.MAX_IMAGE_PIXELS=20_000_000
@@ -106,6 +106,7 @@ class CheckoutForm(forms.Form):
     email=forms.EmailField(label='E-mail',widget=forms.EmailInput(attrs={'autocomplete':'email'}))
     phone=forms.CharField(label='Celular com DDD',max_length=25,widget=forms.TextInput(attrs={'autocomplete':'tel','inputmode':'tel'}))
     document=forms.CharField(label='CPF',required=False,max_length=18,widget=forms.TextInput(attrs={'autocomplete':'off','inputmode':'numeric','placeholder':'000.000.000-00'}))
+    coupon_code=forms.CharField(label='Cupom de desconto',required=False,max_length=40,widget=forms.TextInput(attrs={'autocomplete':'off','placeholder':'Opcional'}))
     quantity=forms.IntegerField(label='Quantidade de ingressos',min_value=1,max_value=20,initial=1)
     terms=forms.BooleanField(label='Li as informações da compra e as regras do evento.')
     request_key=forms.UUIDField(widget=forms.HiddenInput)
@@ -154,3 +155,40 @@ class ExpenseForm(forms.ModelForm):
         model=Expense
         fields=['description','amount','kind','date']
         widgets={'amount':forms.NumberInput(attrs={'min':'0.01','step':'0.01'}),'date':forms.DateInput(attrs={'type':'date'},format='%Y-%m-%d')}
+
+class CouponForm(forms.ModelForm):
+    class Meta:
+        model=Coupon
+        fields=['code','discount_type','value','event','max_uses','valid_from','valid_until','active']
+        widgets={
+            'valid_from':forms.DateTimeInput(attrs={'type':'datetime-local'},format='%Y-%m-%dT%H:%M'),
+            'valid_until':forms.DateTimeInput(attrs={'type':'datetime-local'},format='%Y-%m-%dT%H:%M'),
+            'value':forms.NumberInput(attrs={'min':'0.01','step':'0.01'}),
+        }
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.fields['valid_from'].input_formats=['%Y-%m-%dT%H:%M']
+        self.fields['valid_until'].input_formats=['%Y-%m-%dT%H:%M']
+    def clean_code(self):
+        return re.sub(r'\s+','',self.cleaned_data['code']).upper()
+    def clean(self):
+        cleaned=super().clean()
+        if cleaned.get('discount_type')=='percent' and cleaned.get('value') and cleaned['value']>100:
+            self.add_error('value','O desconto percentual não pode passar de 100%.')
+        if cleaned.get('valid_until') and cleaned.get('valid_from') and cleaned['valid_until']<=cleaned['valid_from']:
+            self.add_error('valid_until','A validade final deve ser depois do início.')
+        return cleaned
+
+class TicketInventoryUploadForm(forms.Form):
+    files=forms.FileField(label='Ingressos oficiais em PDF',widget=forms.ClearableFileInput(attrs={'accept':'application/pdf'}))
+    label_prefix=forms.CharField(label='Prefixo da identificação',required=False,max_length=50,help_text='Ex.: Camarote A. Os arquivos serão numerados automaticamente.')
+
+class CustomerEmailForm(forms.Form):
+    email=forms.EmailField(label='Seu e-mail',widget=forms.EmailInput(attrs={'autocomplete':'email'}))
+
+class CustomerCodeForm(forms.Form):
+    code=forms.CharField(label='Código de acesso',min_length=6,max_length=6,widget=forms.TextInput(attrs={'inputmode':'numeric','autocomplete':'one-time-code','placeholder':'000000'}))
+    def clean_code(self):
+        value=re.sub(r'\D','',self.cleaned_data['code'])
+        if len(value)!=6: raise forms.ValidationError('Digite o código de 6 números.')
+        return value
