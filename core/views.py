@@ -605,15 +605,48 @@ def event_edit(request,pk=None):
         except ValidationError as exc: form.add_error(None,exc)
     return render(request,'panel/event_form.html',{'active':'events','form':form,'event':event})
 
+def _safe_delete_file(storage,name):
+    if not name:
+        return
+    try:
+        storage.delete(name)
+    except Exception:
+        logger.warning('Falha ao remover arquivo ligado a evento excluído: %s',name)
+
 @operator_required
 @require_POST
 def event_delete(request,pk):
+    files=[]
     with transaction.atomic():
         event=get_object_or_404(Event.objects.select_for_update(),pk=pk)
-        if event.orders.exists():
-            event.status='closed'; event.save(update_fields=['status']); messages.info(request,'O evento foi encerrado. Os pedidos foram preservados.')
-        else: event.delete(); messages.success(request,'Evento excluído.')
-        log(request.user,'Evento excluído ou encerrado',pk)
+
+        if event.cover:
+            files.append((event.cover.storage,event.cover.name))
+        for photo in event.photos.all():
+            if photo.image:
+                files.append((photo.image.storage,photo.image.name))
+        for ticket in event.ticket_inventory.all():
+            if ticket.file:
+                files.append((ticket.file.storage,ticket.file.name))
+
+        orders=list(event.orders.prefetch_related('tickets'))
+        for order in orders:
+            if order.receipt:
+                files.append((order.receipt.storage,order.receipt.name))
+            if order.official_ticket:
+                files.append((order.official_ticket.storage,order.official_ticket.name))
+            for ticket in order.tickets.all():
+                if ticket.file:
+                    files.append((ticket.file.storage,ticket.file.name))
+
+        event.orders.all().delete()
+        title=event.title
+        event.delete()
+        log(request.user,'Evento excluído definitivamente',pk)
+        for storage,name in files:
+            transaction.on_commit(lambda storage=storage,name=name:_safe_delete_file(storage,name))
+
+    messages.success(request,f'Evento “{title}” excluído definitivamente.')
     return redirect('panel_events')
 
 @operator_required
