@@ -7,5 +7,7 @@ def site_context(request):
     texts={**DEFAULT_TEXTS,**cfg.texts}
     from django.conf import settings
     provider=getattr(settings,'PAYMENT_PROVIDER','manual')
-    gateway_ready=getattr(settings,'PAGARME_CONFIGURED',False) if provider=='pagarme' else bool(cfg.pix_key and cfg.pix_name and cfg.pix_city)
-    return {'site':cfg,'copy':texts,'sales_ready':cfg.sales_enabled and gateway_ready,'payment_provider':provider,'pagarme_ready':getattr(settings,'PAGARME_CONFIGURED',False),'instagram_handle':cfg.instagram.rstrip('/').split('/')[-1]}
+    if provider=='pagarme': gateway_ready=getattr(settings,'PAGARME_CONFIGURED',False)
+    elif provider=='mercadopago': gateway_ready=getattr(settings,'MERCADOPAGO_CONFIGURED',False)
+    else: gateway_ready=bool(cfg.pix_key and cfg.pix_name and cfg.pix_city)
+    return {'site':cfg,'copy':texts,'sales_ready':cfg.sales_enabled and gateway_ready,'payment_provider':provider,'pagarme_ready':getattr(settings,'PAGARME_CONFIGURED',False),'mercadopago_ready':getattr(settings,'MERCADOPAGO_CONFIGURED',False),'instagram_handle':cfg.instagram.rstrip('/').split('/')[-1]}
