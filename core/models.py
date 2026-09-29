@@ -35,12 +35,25 @@ class SiteSettings(models.Model):
 
 class Event(models.Model):
     CATEGORIES=[('football','Futebol'),('concert','Show')]
+    COMPETITIONS=[
+        ('brasileirao','Campeonato Brasileiro'),
+        ('copa_do_brasil','Copa do Brasil'),
+        ('libertadores','CONMEBOL Libertadores'),
+        ('sul_americana','CONMEBOL Sul-Americana'),
+        ('paulista','Campeonato Paulista'),
+        ('supercopa','Supercopa Rei'),
+        ('recopa','Recopa Sul-Americana'),
+        ('mundial','Mundial de Clubes'),
+        ('amistoso','Amistoso'),
+        ('outra','Outra competição'),
+    ]
     STATUSES=[('draft','Rascunho'),('published','Publicado'),('closed','Encerrado')]
     TICKET_SOURCES=[('ticketmaster','Ticketmaster'),('spfc','São Paulo FC'),('producer','Produtor / organizador'),('other','Outro')]
     id=models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False)
     title=models.CharField('nome do evento',max_length=160)
     description=models.TextField('descrição',max_length=10000)
     category=models.CharField('categoria',choices=CATEGORIES,max_length=16)
+    competition=models.CharField('competição',choices=COMPETITIONS,max_length=24,blank=True)
     starts_at=models.DateTimeField('data e horário')
     doors_at=models.TimeField('abertura do camarote',blank=True,null=True)
     price=models.DecimalField('preço por ingresso',max_digits=10,decimal_places=2,validators=[MinValueValidator(Decimal('1.00'))])
