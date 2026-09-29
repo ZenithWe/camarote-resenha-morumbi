@@ -36,6 +36,7 @@ class SiteSettings(models.Model):
 class Event(models.Model):
     CATEGORIES=[('football','Futebol'),('concert','Show')]
     STATUSES=[('draft','Rascunho'),('published','Publicado'),('closed','Encerrado')]
+    TICKET_SOURCES=[('ticketmaster','Ticketmaster'),('spfc','São Paulo FC'),('producer','Produtor / organizador'),('other','Outro')]
     id=models.UUIDField(primary_key=True,default=uuid.uuid4,editable=False)
     title=models.CharField('nome do evento',max_length=160)
     description=models.TextField('descrição',max_length=10000)
@@ -45,6 +46,8 @@ class Event(models.Model):
     price=models.DecimalField('preço por ingresso',max_digits=10,decimal_places=2,validators=[MinValueValidator(Decimal('1.00'))])
     capacity=models.PositiveIntegerField('quantidade de ingressos',validators=[MinValueValidator(1),MaxValueValidator(100000)])
     max_per_order=models.PositiveSmallIntegerField('limite por pedido',default=8,validators=[MinValueValidator(1),MaxValueValidator(20)])
+    ticket_source=models.CharField('origem do ingresso',choices=TICKET_SOURCES,max_length=20,default='ticketmaster')
+    ticket_source_notes=models.CharField('detalhes da origem',max_length=240,blank=True,help_text='Opcional. Ex.: lote do camarote, produtor responsável ou observação interna.')
     location=models.CharField('local',max_length=240,default='MorumBIS • São Paulo, SP')
     includes=models.TextField('o que está incluído (um item por linha)',blank=True,max_length=2000)
     age_rules=models.CharField('classificação etária e regras',max_length=600,blank=True)
@@ -118,6 +121,14 @@ class Order(models.Model):
     @property
     def display_status(self): return 'Reserva expirada' if self.expired else self.get_status_display()
     def __str__(self): return f'{self.code} • {self.customer_name}'
+
+class OrderTicket(models.Model):
+    order=models.ForeignKey(Order,on_delete=models.CASCADE,related_name='tickets')
+    file=models.FileField('ingresso oficial',upload_to=ticket_path,storage=private_storage)
+    label=models.CharField('identificação',max_length=80,blank=True)
+    created_at=models.DateTimeField(auto_now_add=True)
+    class Meta: ordering=['id']
+    def __str__(self): return self.label or f'Ingresso {self.pk}'
 
 class Expense(models.Model):
     TYPES=[('expense','Despesa'),('withdrawal','Retirada')]
