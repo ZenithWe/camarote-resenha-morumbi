@@ -18,7 +18,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from django.views.decorators.cache import never_cache
-from .models import Event, EventPhoto, Order, Banner, SiteSettings, Expense, AuditLog
+from .models import Event, EventPhoto, Order, OrderTicket, Banner, SiteSettings, Expense, AuditLog
 from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, clean_image
 from .content import CONTENT, DEFAULT_TEXTS
 from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied
@@ -91,6 +91,11 @@ def official_ticket(request,token):
     order=get_object_or_404(Order,access_token=token,status='paid')
     if not order.official_ticket: raise Http404
     return FileResponse(order.official_ticket.open('rb'),as_attachment=True,filename=f'ingresso-{order.code}.pdf',content_type='application/pdf')
+
+@never_cache
+def ticket_file(request,token,pk):
+    ticket=get_object_or_404(OrderTicket.objects.select_related('order'),pk=pk,order__access_token=token,order__status='paid')
+    return FileResponse(ticket.file.open('rb'),as_attachment=True,filename=f'ingresso-{ticket.order.code}-{ticket.pk}.pdf',content_type='application/pdf')
 
 @operator_required
 def dashboard(request):
@@ -195,9 +200,20 @@ def panel_order(request,pk):
     order=get_object_or_404(Order.objects.select_related('event'),pk=pk)
     ticket_form=TicketForm(request.POST or None,request.FILES or None)
     if request.method=='POST' and request.POST.get('action')=='ticket':
-        if order.status!='paid': messages.error(request,'Confirme o pagamento antes de anexar o ingresso oficial.')
+        if order.status!='paid':
+            messages.error(request,'Confirme o pagamento antes de anexar o ingresso oficial.')
+        elif order.tickets.count() + (1 if order.official_ticket else 0) >= order.quantity:
+            messages.error(request,'Este pedido já possui a quantidade de ingressos correspondente à compra.')
         elif ticket_form.is_valid():
-            order.official_ticket=ticket_form.cleaned_data['official_ticket']; order.save(update_fields=['official_ticket']); log(request.user,'Ingresso oficial anexado',order.pk); messages.success(request,'Ingresso disponibilizado na página privada do pedido.'); return redirect('panel_order',pk=pk)
+            number=order.tickets.count() + (2 if order.official_ticket else 1)
+            ticket=OrderTicket.objects.create(
+                order=order,
+                file=ticket_form.cleaned_data['official_ticket'],
+                label=ticket_form.cleaned_data.get('label') or f'Ingresso {number}',
+            )
+            log(request.user,'Ingresso oficial anexado',ticket.pk)
+            messages.success(request,'Ingresso disponibilizado na página privada do pedido.')
+            return redirect('panel_order',pk=pk)
     elif request.method=='POST':
         try:
             fee=Decimal(request.POST.get('fee','0').replace(',','.'))
@@ -206,6 +222,17 @@ def panel_order(request,pk):
             messages.success(request,'Pedido atualizado.'); return redirect('panel_order',pk=pk)
         except (ValidationError,InvalidOperation) as exc: messages.error(request,' '.join(exc.messages) if isinstance(exc,ValidationError) else 'Informe uma taxa válida.')
     return render(request,'panel/order_detail.html',{'active':'orders','order':order,'ticket_form':ticket_form})
+
+@operator_required
+@require_POST
+def ticket_delete(request,pk):
+    ticket=get_object_or_404(OrderTicket.objects.select_related('order'),pk=pk)
+    order_pk=ticket.order_id
+    ticket.file.delete(save=False)
+    log(request.user,'Ingresso oficial removido',ticket.pk)
+    ticket.delete()
+    messages.success(request,'Ingresso removido do pedido.')
+    return redirect('panel_order',pk=order_pk)
 
 @operator_required
 def receipt_file(request,pk):
