@@ -111,13 +111,15 @@ class CheckoutForm(forms.Form):
     terms=forms.BooleanField(label='Li as informações da compra e as regras do evento.')
     request_key=forms.UUIDField(widget=forms.HiddenInput)
     website=forms.CharField(required=False,widget=forms.TextInput(attrs={'tabindex':'-1','autocomplete':'off'}))
-    def __init__(self,*args,require_document=False,**kwargs):
+    def __init__(self,*args,require_document=False,test_mode=False,**kwargs):
         super().__init__(*args,**kwargs)
         self.require_document=require_document
+        self.test_mode=test_mode
         self.fields['document'].required=require_document
     def clean_phone(self):
         val=re.sub(r'\D','',self.cleaned_data['phone'])
         if len(val) in [12,13] and val.startswith('55'): val=val[2:]
+        if self.test_mode and re.fullmatch(r'[1-9]\d\d{8,9}',val): return '55'+val
         if not re.fullmatch(r'[1-9]\d\d{8,9}',val) or len(set(val))<=2: raise forms.ValidationError('Informe um celular válido com DDD.')
         return '55'+val
     def clean_document(self):
