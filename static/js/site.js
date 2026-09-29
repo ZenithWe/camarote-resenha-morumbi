@@ -15,7 +15,7 @@ function showSlide(index){if(!slides.length)return;slide=(index+slides.length)%s
 $('[data-slide-next]')?.addEventListener('click',()=>showSlide(slide+1));
 $('[data-slide-prev]')?.addEventListener('click',()=>showSlide(slide-1));
 $$('[data-copy]').forEach(button=>button.addEventListener('click',async()=>{const input=$(button.dataset.copy);try{await navigator.clipboard.writeText(input.value);toast('Pix copiado. Confira o valor e o recebedor no seu banco.')}catch{input.focus();input.select();toast('Selecione e copie o código Pix.')}}));
-const checkout=$('[data-checkout]');if(checkout){const qty=$('[name=quantity]',checkout);const price=Number(checkout.dataset.price.replace(',','.'));const update=()=>{const value=price*Math.max(0,Number(qty.value)||0);$('#checkout-total').textContent=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value)};qty.addEventListener('input',update);update()}
+const checkout=$('[data-checkout]');if(checkout){const qty=$('[name=quantity]',checkout);const price=Number(checkout.dataset.price.replace(',','.'));const update=()=>{const value=price*Math.max(0,Number(qty.value)||0);const formatted=new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value);const desktop=$('#checkout-total');const mobile=$('#mobile-checkout-total');if(desktop)desktop.textContent=formatted;if(mobile)mobile.textContent=formatted};qty?.addEventListener('input',update);update()}
 let activeForm=null;const confirmation=$('#confirm-dialog');
 $$('form[data-confirm]').forEach(form=>form.addEventListener('submit',e=>{if(form.dataset.confirmed==='yes')return;e.preventDefault();activeForm=form;$('#confirm-message').textContent=form.dataset.confirm;confirmation.showModal()}));
 $('[data-close-dialog]')?.addEventListener('click',()=>{confirmation.close();activeForm=null});
@@ -24,14 +24,20 @@ $$('[data-height]').forEach(bar=>bar.style.height=Math.max(1,Math.min(100,Number
 $$('input[type=file][accept*="image"]').forEach(input=>input.addEventListener('change',()=>{const field=input.closest('.field');field?.querySelectorAll('.upload-preview').forEach(x=>{URL.revokeObjectURL(x.src);x.remove()});const files=[...input.files].slice(0,3);for(const file of files){if(!['image/jpeg','image/png','image/webp'].includes(file.type))continue;const img=document.createElement('img');img.className='upload-preview';img.alt='Prévia da imagem selecionada';img.src=URL.createObjectURL(file);field?.append(img)}}));
 const dateField=$('#id_event_date');if(dateField&&!dateField.value){const date=new URLSearchParams(location.search).get('dia');if(date&&/^\d{4}-\d{2}-\d{2}$/.test(date))dateField.value=date}
 
-$$('form[data-single-submit]').forEach(form=>form.addEventListener('submit',()=>{
-  if(form.dataset.submitting==='yes')return;
+$('form[data-single-submit]').forEach(form=>form.addEventListener('submit',e=>{
+  if(form.dataset.submitting==='yes'){e.preventDefault();return}
   form.dataset.submitting='yes';
   const button=$('button[type="submit"],button:not([type])',form);
   if(button){
     button.disabled=true;
     button.setAttribute('aria-busy','true');
     button.dataset.originalText=button.textContent;
-    button.textContent='Entrando...';
+    button.textContent=form.closest('.login-card')?'Entrando...':'Enviando...';
   }
 }));
+
+function onlyDigits(value){return value.replace(/\D/g,'')}
+function maskCpf(value){const d=onlyDigits(value).slice(0,11);return d.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2')}
+function maskPhone(value){const d=onlyDigits(value).replace(/^55(?=\d{10,11}$)/,'').slice(0,11);if(d.length<=10)return d.replace(/(\d{2})(\d)/,'($1) $2').replace(/(\d{4})(\d)/,'$1-$2');return d.replace(/(\d{2})(\d)/,'($1) $2').replace(/(\d{5})(\d)/,'$1-$2')}
+const cpfInput=$('[name=document]');if(cpfInput){cpfInput.addEventListener('input',()=>cpfInput.value=maskCpf(cpfInput.value));if(cpfInput.value)cpfInput.value=maskCpf(cpfInput.value)}
+const phoneInput=$('[name=phone]');if(phoneInput){phoneInput.addEventListener('input',()=>phoneInput.value=maskPhone(phoneInput.value));if(phoneInput.value)phoneInput.value=maskPhone(phoneInput.value)}
