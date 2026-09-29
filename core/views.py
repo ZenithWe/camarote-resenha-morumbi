@@ -579,7 +579,10 @@ def panel_events(request):
     search=request.GET.get('q','').strip()
     if search: events=events.filter(title__icontains=search)
     status=request.GET.get('status','')
-    if status in dict(Event.STATUSES): events=events.filter(status=status)
+    if status in dict(Event.STATUSES):
+        events=events.filter(status=status)
+    else:
+        events=events.exclude(status='closed')
     return render(request,'panel/events.html',{'active':'events','events':events,'search':search,'status':status})
 
 @operator_required
@@ -630,7 +633,7 @@ def agenda(request):
     first=date(year,month,1)
     next_month=date(year+1,1,1) if month==12 else date(year,month+1,1)
     prev=first-timedelta(days=1)
-    events=list(Event.objects.filter(starts_at__date__gte=first,starts_at__date__lt=next_month))
+    events=list(Event.objects.exclude(status='closed').filter(starts_at__date__gte=first,starts_at__date__lt=next_month))
     event_days={}
     for e in events: event_days.setdefault(timezone.localdate(e.starts_at),[]).append(e)
     weeks=[]
