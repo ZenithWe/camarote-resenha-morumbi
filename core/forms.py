@@ -40,11 +40,13 @@ class EventForm(forms.ModelForm):
     event_time=forms.TimeField(label='Horário do evento',widget=forms.TimeInput(attrs={'type':'time'},format='%H:%M'),input_formats=['%H:%M'])
     class Meta:
         model=Event
-        fields=['title','description','category','price','capacity','max_per_order','ticket_source','ticket_source_notes','doors_at','location','includes','food_info','drinks_info','parking_info','age_rules','cover','status','featured']
+        fields=['title','description','category','competition','price','capacity','max_per_order','ticket_source','ticket_source_notes','doors_at','location','includes','food_info','drinks_info','parking_info','age_rules','cover','status','featured']
         widgets={'description':forms.Textarea(attrs={'rows':5}),'includes':forms.Textarea(attrs={'rows':4}),'food_info':forms.Textarea(attrs={'rows':2}),'drinks_info':forms.Textarea(attrs={'rows':2}),'parking_info':forms.Textarea(attrs={'rows':2}),'doors_at':forms.TimeInput(attrs={'type':'time'},format='%H:%M'),'price':forms.NumberInput(attrs={'step':'0.01','min':'1'}),'ticket_source_notes':forms.Textarea(attrs={'rows':2}),'cover':forms.ClearableFileInput(attrs={'accept':'image/jpeg,image/png,image/webp'})}
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.fields['cover'].help_text='JPG, PNG ou WebP, até 8 MB. Formato horizontal recomendado.'
+        self.fields['competition'].required=False
+        self.fields['competition'].help_text='Aparece somente quando a categoria escolhida é Futebol.'
         if self.instance and self.instance.pk and self.instance.starts_at:
             dt=timezone.localtime(self.instance.starts_at)
             self.fields['event_date'].initial=dt.date()
@@ -52,6 +54,11 @@ class EventForm(forms.ModelForm):
     def clean_cover(self): return clean_image(self.cleaned_data.get('cover'))
     def clean(self):
         cleaned=super().clean()
+        if cleaned.get('category')=='football' and not cleaned.get('competition'):
+            self.add_error('competition','Selecione a competição deste jogo.')
+        elif cleaned.get('category')!='football':
+            cleaned['competition']=''
+            self.instance.competition=''
         if cleaned.get('event_date') and cleaned.get('event_time'):
             from datetime import datetime
             self.instance.starts_at=timezone.make_aware(datetime.combine(cleaned['event_date'],cleaned['event_time']))
