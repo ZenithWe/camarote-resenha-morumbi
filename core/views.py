@@ -1,4 +1,4 @@
-import calendar, csv, uuid, re, json
+import calendar, csv, uuid, re, json, secrets
 from io import BytesIO
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -27,6 +27,8 @@ from .content import CONTENT, DEFAULT_TEXTS
 from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook, assign_event_tickets, send_customer_login_code, customer_code_hash
 
 operator_required=user_passes_test(lambda u:u.is_active and u.is_superuser,login_url='/painel/entrar/')
+def is_admin_test_mode(request):
+    return bool(request.user.is_authenticated and request.user.is_superuser and request.session.get('admin_test_mode') is True)
 class PanelLoginView(LoginView):
     template_name='registration/login.html'
     redirect_authenticated_user=False
@@ -113,24 +115,25 @@ def checkout(request,pk):
     event=get_object_or_404(Event,pk=pk,status='published')
     session_key=f'checkout_{pk}'
     if request.method=='GET' or session_key not in request.session: request.session[session_key]=str(uuid.uuid4())
-    form=CheckoutForm(request.POST or None,initial={'request_key':request.session[session_key]},require_document=getattr(settings,'PAYMENT_PROVIDER','manual') in ['pagarme','mercadopago'])
+    test_mode=is_admin_test_mode(request)
+    form=CheckoutForm(request.POST or None,initial={'request_key':request.session[session_key]},require_document=(getattr(settings,'PAYMENT_PROVIDER','manual') in ['pagarme','mercadopago'] and not test_mode))
     form.fields['quantity'].max_value=event.max_per_order
     form.fields['quantity'].widget.attrs.update({'min':1,'max':event.max_per_order})
     if request.method=='POST' and form.is_valid():
         if str(form.cleaned_data['request_key'])!=request.session[session_key]: form.add_error(None,'A sessão de compra foi atualizada. Reabra o evento.')
         else:
             try:
-                order=create_order({**form.cleaned_data,'event_id':event.pk},fingerprint(request))
+                order=create_order({**form.cleaned_data,'event_id':event.pk},fingerprint(request),provider_override='test' if test_mode else None)
                 return redirect('order',token=order.access_token)
             except ValidationError as exc: form.add_error(None,exc)
-    return render(request,'core/checkout.html',{'event':event,'form':form})
+    return render(request,'core/checkout.html',{'event':event,'form':form,'test_mode':test_mode})
 
 @never_cache
 def order_detail(request,token):
     order=get_object_or_404(Order.objects.select_related('event'),access_token=token)
-    form=ReceiptForm(request.POST or None,request.FILES or None) if order.payment_provider not in ['pagarme','mercadopago'] else None
+    form=ReceiptForm(request.POST or None,request.FILES or None) if order.payment_provider not in ['pagarme','mercadopago','test'] else None
     if request.method=='POST':
-        if order.payment_provider in ['pagarme','mercadopago']:
+        if order.payment_provider in ['pagarme','mercadopago','test']:
             return JsonResponse({'detail':'Pedidos automáticos são confirmados pelo gateway de pagamento.'},status=405)
         if form.is_valid():
             try:
@@ -140,7 +143,7 @@ def order_detail(request,token):
         'order':order,
         'form':form,
         'pix':pix_payload(order) if order.status=='pending' and not order.expired else '',
-        'automatic_payment':order.payment_provider in ['pagarme','mercadopago'],'payment_provider':order.payment_provider,
+        'automatic_payment':order.payment_provider in ['pagarme','mercadopago','test'],'payment_provider':order.payment_provider,'test_mode':is_admin_test_mode(request),
     }
     if context['automatic_payment'] and order.status=='pending' and not order.expired:
         return render(request,'core/payment.html',context)
@@ -251,20 +254,34 @@ def inventory_ticket_file(request,token,pk):
 def customer_login(request):
     if request.session.get('customer_email'): return redirect('customer_account')
     form=CustomerEmailForm(request.POST or None)
+    test_mode=is_admin_test_mode(request)
     if request.method=='POST' and form.is_valid():
         email=form.cleaned_data['email'].lower()
-        if getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False):
+        if test_mode:
+            if not Order.objects.filter(email__iexact=email).exists():
+                form.add_error('email','Não há pedidos com este e-mail. Faça primeiro uma compra de teste usando este mesmo e-mail.')
+            else:
+                code=f'{secrets.randbelow(1000000):06d}'
+                CustomerLoginCode.objects.filter(email__iexact=email,used_at__isnull=True).update(used_at=timezone.now())
+                CustomerLoginCode.objects.create(email=email,code_hash=customer_code_hash(email,code),expires_at=timezone.now()+timedelta(minutes=10))
+                request.session['customer_login_email']=email
+                request.session['customer_test_code']=code
+                messages.success(request,'Código de teste gerado. Ele aparece somente para o administrador.')
+                return redirect('customer_verify')
+        elif getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False):
             try: send_customer_login_code(email)
             except Exception: pass
             request.session['customer_login_email']=email
             messages.success(request,'Se houver pedidos nesse e-mail, enviamos um código de acesso.')
             return redirect('customer_verify')
-        form.add_error(None,'O acesso por código estará disponível quando o e-mail profissional for configurado. Por enquanto, use o link privado do seu pedido.')
-    return render(request,'core/customer_login.html',{'form':form})
+        else:
+            form.add_error(None,'O envio de código por e-mail ainda não está configurado. Entre no ADM e ative o Modo de Teste para testar esta área.')
+    return render(request,'core/customer_login.html',{'form':form,'test_mode':test_mode})
 
 def customer_verify(request):
     email=request.session.get('customer_login_email')
     if not email: return redirect('customer_login')
+    test_mode=is_admin_test_mode(request)
     form=CustomerCodeForm(request.POST or None)
     if request.method=='POST' and form.is_valid():
         challenge=CustomerLoginCode.objects.filter(email__iexact=email,used_at__isnull=True,expires_at__gt=timezone.now()).first()
@@ -272,11 +289,13 @@ def customer_verify(request):
             challenge.used_at=timezone.now(); challenge.save(update_fields=['used_at'])
             request.session['customer_email']=email
             request.session.pop('customer_login_email',None)
+            request.session.pop('customer_test_code',None)
             return redirect('customer_account')
         if challenge:
             challenge.attempts+=1; challenge.save(update_fields=['attempts'])
         form.add_error('code','Código inválido ou expirado.')
-    return render(request,'core/customer_verify.html',{'form':form,'email':email})
+    test_code=request.session.get('customer_test_code') if test_mode else None
+    return render(request,'core/customer_verify.html',{'form':form,'email':email,'test_mode':test_mode,'test_code':test_code})
 
 def customer_account(request):
     email=request.session.get('customer_email')
@@ -291,18 +310,45 @@ def customer_logout(request):
     return redirect('home')
 
 @operator_required
+@require_POST
+def toggle_test_mode(request):
+    enabled=request.POST.get('enabled')=='1'
+    request.session['admin_test_mode']=enabled
+    if not enabled:
+        request.session.pop('customer_test_code',None)
+        request.session.pop('customer_login_email',None)
+        request.session.pop('customer_email',None)
+    messages.success(request,'Modo de Teste ativado neste navegador.' if enabled else 'Modo de Teste desativado.')
+    return redirect('production_status')
+
+@operator_required
+@require_POST
+def confirm_test_payment(request,pk):
+    if not is_admin_test_mode(request): raise PermissionDenied
+    order=get_object_or_404(Order,pk=pk,payment_provider='test')
+    if order.status in ['pending','review']:
+        try:
+            change_order(order.pk,'paid',request.user)
+            order.refresh_from_db()
+            order.provider_status='test_paid'; order.save(update_fields=['provider_status'])
+            messages.success(request,'Pagamento de teste confirmado. Nenhum dinheiro foi movimentado.')
+        except ValidationError as exc:
+            messages.error(request,' '.join(exc.messages))
+    return redirect('order',token=order.access_token)
+
+@operator_required
 def dashboard(request):
-    paid=Order.objects.filter(status='paid')
-    gross=Order.objects.filter(paid_at__isnull=False).aggregate(n=Sum('total'))['n'] or Decimal('0')
-    refunds=Order.objects.filter(status='refunded').aggregate(n=Sum('total'))['n'] or Decimal('0')
-    fees=Order.objects.filter(paid_at__isnull=False).aggregate(n=Sum('fee'))['n'] or Decimal('0')
+    paid=Order.objects.filter(status='paid').exclude(payment_provider='test')
+    gross=Order.objects.filter(paid_at__isnull=False).exclude(payment_provider='test').aggregate(n=Sum('total'))['n'] or Decimal('0')
+    refunds=Order.objects.filter(status='refunded').exclude(payment_provider='test').aggregate(n=Sum('total'))['n'] or Decimal('0')
+    fees=Order.objects.filter(paid_at__isnull=False).exclude(payment_provider='test').aggregate(n=Sum('fee'))['n'] or Decimal('0')
     outgoing=Expense.objects.aggregate(n=Sum('amount'))['n'] or Decimal('0')
-    pending=Order.objects.filter(Q(status='review')|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('total'))['n'] or Decimal('0')
+    pending=Order.objects.exclude(payment_provider='test').filter(Q(status='review')|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('total'))['n'] or Decimal('0')
     sold=paid.aggregate(n=Sum('quantity'))['n'] or 0
     paid_orders=paid.count()
-    all_orders=Order.objects.count()
-    expired_orders=Order.objects.filter(status='pending',expires_at__lte=timezone.now()).count()
-    cancelled_orders=Order.objects.filter(status='cancelled').count()
+    all_orders=Order.objects.exclude(payment_provider='test').count()
+    expired_orders=Order.objects.filter(status='pending',expires_at__lte=timezone.now()).exclude(payment_provider='test').count()
+    cancelled_orders=Order.objects.filter(status='cancelled').exclude(payment_provider='test').count()
     conversion_rate=round(paid_orders/all_orders*100,1) if all_orders else 0
     paid_revenue=paid.aggregate(n=Sum('total'))['n'] or Decimal('0')
     avg_ticket=(paid_revenue/paid_orders) if paid_orders else Decimal('0')
