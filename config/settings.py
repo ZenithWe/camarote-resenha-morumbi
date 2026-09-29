@@ -113,6 +113,7 @@ if S3_CONFIGURED:
 elif not DEBUG and not IS_COLLECTSTATIC and os.getenv('PERSISTENT_MEDIA','0')!='1':
     raise ImproperlyConfigured('Configure o armazenamento S3 ou PERSISTENT_MEDIA=1 com disco persistente para preservar os uploads.')
 EMAIL_BACKEND='django.core.mail.backends.smtp.EmailBackend'
+EMAIL_PROVIDER=os.getenv('EMAIL_PROVIDER','brevo').strip().lower()
 EMAIL_HOST=os.getenv('EMAIL_HOST','smtp.gmail.com').strip()
 EMAIL_PORT=int(os.getenv('EMAIL_PORT','587'))
 EMAIL_USE_TLS=os.getenv('EMAIL_USE_TLS','1')=='1'
@@ -123,7 +124,14 @@ if EMAIL_HOST.lower()=='smtp.gmail.com':
 DEFAULT_FROM_EMAIL=os.getenv('DEFAULT_FROM_EMAIL','').strip() or EMAIL_HOST_USER
 SERVER_EMAIL=DEFAULT_FROM_EMAIL or 'webmaster@localhost'
 EMAIL_TIMEOUT=int(os.getenv('EMAIL_TIMEOUT','15'))
-EMAIL_NOTIFICATIONS_ENABLED=bool(EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD and DEFAULT_FROM_EMAIL)
+SMTP_EMAIL_CONFIGURED=bool(EMAIL_HOST and EMAIL_HOST_USER and EMAIL_HOST_PASSWORD and DEFAULT_FROM_EMAIL)
+
+BREVO_API_KEY=os.getenv('BREVO_API_KEY','').strip()
+BREVO_API_BASE=os.getenv('BREVO_API_BASE','https://api.brevo.com/v3').rstrip('/')
+BREVO_SENDER_EMAIL=os.getenv('BREVO_SENDER_EMAIL','').strip() or EMAIL_HOST_USER
+BREVO_SENDER_NAME=os.getenv('BREVO_SENDER_NAME','Camarote Resenha Morumbi').strip()
+BREVO_CONFIGURED=bool(BREVO_API_KEY and BREVO_SENDER_EMAIL)
+EMAIL_NOTIFICATIONS_ENABLED=(BREVO_CONFIGURED if EMAIL_PROVIDER=='brevo' else SMTP_EMAIL_CONFIGURED)
 SITE_URL=os.getenv('SITE_URL','https://resenha-morumbi.onrender.com').rstrip('/')
 PRODUCTION_DB_EXPIRES_AT=os.getenv('PRODUCTION_DB_EXPIRES_AT','')
 
