@@ -41,3 +41,28 @@ function maskCpf(value){const d=onlyDigits(value).slice(0,11);return d.replace(/
 function maskPhone(value){const d=onlyDigits(value).replace(/^55(?=\d{10,11}$)/,'').slice(0,11);if(d.length<=10)return d.replace(/(\d{2})(\d)/,'($1) $2').replace(/(\d{4})(\d)/,'$1-$2');return d.replace(/(\d{2})(\d)/,'($1) $2').replace(/(\d{5})(\d)/,'$1-$2')}
 const cpfInput=$('[name=document]');if(cpfInput){cpfInput.addEventListener('input',()=>cpfInput.value=maskCpf(cpfInput.value));if(cpfInput.value)cpfInput.value=maskCpf(cpfInput.value)}
 const phoneInput=$('[name=phone]');if(phoneInput){phoneInput.addEventListener('input',()=>phoneInput.value=maskPhone(phoneInput.value));if(phoneInput.value)phoneInput.value=maskPhone(phoneInput.value)}
+
+const paymentWatch=$('[data-payment-watch]');
+if(paymentWatch){
+  let checks=0;
+  const poll=async()=>{
+    if(document.hidden||checks>=120)return;
+    checks++;
+    try{
+      const response=await fetch(paymentWatch.dataset.statusUrl,{headers:{'Accept':'application/json'},cache:'no-store'});
+      if(!response.ok)return;
+      const data=await response.json();
+      if(data.paid){
+        toast('Pagamento confirmado! Seus ingressos estão sendo liberados.');
+        setTimeout(()=>location.href=paymentWatch.dataset.orderUrl,900);
+        return;
+      }
+      if(['cancelled','refunded'].includes(data.status)){
+        location.href=paymentWatch.dataset.orderUrl;
+        return;
+      }
+    }catch{}
+    setTimeout(poll,5000);
+  };
+  setTimeout(poll,4000);
+}
