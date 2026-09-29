@@ -39,8 +39,8 @@ class EventForm(forms.ModelForm):
     event_time=forms.TimeField(label='Horário do evento',widget=forms.TimeInput(attrs={'type':'time'},format='%H:%M'),input_formats=['%H:%M'])
     class Meta:
         model=Event
-        fields=['title','description','category','price','capacity','max_per_order','doors_at','location','includes','age_rules','cover','status','featured']
-        widgets={'description':forms.Textarea(attrs={'rows':5}),'includes':forms.Textarea(attrs={'rows':4}),'doors_at':forms.TimeInput(attrs={'type':'time'},format='%H:%M'),'price':forms.NumberInput(attrs={'step':'0.01','min':'1'}),'cover':forms.ClearableFileInput(attrs={'accept':'image/jpeg,image/png,image/webp'})}
+        fields=['title','description','category','price','capacity','max_per_order','ticket_source','ticket_source_notes','doors_at','location','includes','age_rules','cover','status','featured']
+        widgets={'description':forms.Textarea(attrs={'rows':5}),'includes':forms.Textarea(attrs={'rows':4}),'doors_at':forms.TimeInput(attrs={'type':'time'},format='%H:%M'),'price':forms.NumberInput(attrs={'step':'0.01','min':'1'}),'ticket_source_notes':forms.Textarea(attrs={'rows':2}),'cover':forms.ClearableFileInput(attrs={'accept':'image/jpeg,image/png,image/webp'})}
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.fields['cover'].help_text='JPG, PNG ou WebP, até 8 MB. Formato horizontal recomendado.'
@@ -122,7 +122,8 @@ class ReceiptForm(forms.Form):
     def clean_receipt(self): return clean_image(self.cleaned_data['receipt'])
 
 class TicketForm(forms.Form):
-    official_ticket=forms.FileField(label='Ingresso oficial em PDF',widget=forms.FileInput(attrs={'accept':'application/pdf'}))
+    official_ticket=forms.FileField(label='Adicionar ingresso oficial em PDF',widget=forms.FileInput(attrs={'accept':'application/pdf'}))
+    label=forms.CharField(label='Identificação',required=False,max_length=80,help_text='Opcional. Ex.: Ingresso 1, Cadeira A12 ou titular.')
     def clean_official_ticket(self):
         f=self.cleaned_data['official_ticket']
         if f.size>10*1024*1024: raise forms.ValidationError('O PDF deve ter até 10 MB.')
