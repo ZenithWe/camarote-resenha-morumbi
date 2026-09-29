@@ -56,7 +56,7 @@ def initialize_mercadopago_pix(order):
         'transaction_amount':float(order.total),
         'description':order.event.title[:255],
         'payment_method_id':'pix',
-        'date_of_expiration':timezone.localtime(order.expires_at).isoformat(),
+        'date_of_expiration':timezone.localtime(timezone.now()+timedelta(minutes=31)).isoformat(),
         'external_reference':str(order.pk),
         'notification_url':f"{settings.SITE_URL}/webhooks/mercadopago/",
         'payer':payer,
