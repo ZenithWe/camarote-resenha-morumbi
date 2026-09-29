@@ -8,3 +8,5 @@ media/
 private-media/
 staticfiles/
 .pytest_cache/
+
+.runtime-secret-key
