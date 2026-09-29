@@ -1,4 +1,4 @@
-import hashlib, hmac, secrets, unicodedata, json, urllib.request, urllib.error, base64
+import hashlib, hmac, secrets, unicodedata, json, urllib.request, urllib.error, base64, html
 from datetime import timedelta
 from decimal import Decimal
 from django.conf import settings
@@ -257,6 +257,15 @@ def send_whatsapp_notification(phone,body):
     except Exception:
         return False
 
+def email_shell(title,lead,body_lines,button_text=None,button_url=None):
+    safe_title=html.escape(str(title))
+    safe_lead=html.escape(str(lead))
+    paragraphs=''.join(f'<p style="margin:0 0 14px;color:#4b5563;line-height:1.7;font-size:15px">{html.escape(str(line))}</p>' for line in body_lines if line)
+    button=''
+    if button_text and button_url:
+        button=f'<p style="margin:26px 0 8px"><a href="{html.escape(str(button_url),quote=True)}" style="display:inline-block;background:#111318;color:#fff;text-decoration:none;padding:14px 20px;border-radius:8px;font-weight:700">{html.escape(str(button_text))}</a></p>'
+    return f'''<!doctype html><html><body style="margin:0;background:#f5f6f8;font-family:Arial,sans-serif;color:#15171b"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:28px 14px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;margin:auto;background:#fff;border-radius:12px;overflow:hidden"><tr><td style="background:#15171b;padding:22px 28px;color:#fff"><div style="font-size:22px;font-weight:800">resenha<span style="color:#ef3340">.</span></div><div style="font-size:11px;letter-spacing:.16em;margin-top:4px">MORUMBI</div></td></tr><tr><td style="padding:32px 28px"><div style="font-size:12px;font-weight:800;color:#ef3340;letter-spacing:.12em;margin-bottom:10px">CAMAROTE RESENHA MORUMBI</div><h1 style="margin:0 0 12px;font-size:28px;line-height:1.2">{safe_title}</h1><p style="margin:0 0 24px;color:#6b7280;font-size:16px">{safe_lead}</p>{paragraphs}{button}<p style="margin:30px 0 0;padding-top:20px;border-top:1px solid #eceef1;color:#8a8f98;font-size:12px;line-height:1.6">Mensagem automática do Camarote Resenha Morumbi. Não compartilhe códigos de acesso ou links privados de pedidos.</p></td></tr></table></td></tr></table></body></html>'''
+
 def notify_order(order_id,kind):
     if not (getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False) or getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False)): return False
     try:
@@ -274,7 +283,8 @@ def notify_order(order_id,kind):
         subject,body=messages.get(kind,('Atualização do pedido',f'Seu pedido {order.code} foi atualizado. Acompanhe em: {url}'))
         sent=False
         if getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False):
-            send_mail(f'Resenha Morumbi • {subject}',body,settings.DEFAULT_FROM_EMAIL,[order.email],fail_silently=True)
+            html_body=email_shell(subject,f'Pedido #{order.code}',[body],button_text='Acompanhar pedido',button_url=url)
+            send_mail(f'Resenha Morumbi • {subject}',body,settings.DEFAULT_FROM_EMAIL,[order.email],fail_silently=True,html_message=html_body)
             sent=True
         if send_whatsapp_notification(order.phone,body): sent=True
         return sent
@@ -338,7 +348,9 @@ def send_customer_login_code(email):
     code=f'{secrets.randbelow(1000000):06d}'
     CustomerLoginCode.objects.filter(email__iexact=email,used_at__isnull=True).update(used_at=timezone.now())
     CustomerLoginCode.objects.create(email=email,code_hash=customer_code_hash(email,code),expires_at=timezone.now()+timedelta(minutes=10))
-    send_mail('Resenha Morumbi • código de acesso',f'Seu código de acesso é {code}. Ele expira em 10 minutos.',settings.DEFAULT_FROM_EMAIL,[email],fail_silently=False)
+    plain=f'Seu código de acesso é {code}. Ele expira em 10 minutos.'
+    html_body=email_shell('Seu código de acesso','Entre na sua conta com o código abaixo.',[f'Código: {code}','Ele expira em 10 minutos e funciona uma única vez.'],button_text='Abrir Minha Conta',button_url=f"{settings.SITE_URL}/minha-conta/codigo/")
+    send_mail('Resenha Morumbi • código de acesso',plain,settings.DEFAULT_FROM_EMAIL,[email],fail_silently=False,html_message=html_body)
     return True
 
 def occupied(event):
