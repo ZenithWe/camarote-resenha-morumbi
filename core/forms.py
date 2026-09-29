@@ -104,15 +104,32 @@ class CheckoutForm(forms.Form):
     customer_name=forms.CharField(label='Nome completo',min_length=4,max_length=120,widget=forms.TextInput(attrs={'autocomplete':'name'}))
     email=forms.EmailField(label='E-mail',widget=forms.EmailInput(attrs={'autocomplete':'email'}))
     phone=forms.CharField(label='Celular com DDD',max_length=25,widget=forms.TextInput(attrs={'autocomplete':'tel','inputmode':'tel'}))
+    document=forms.CharField(label='CPF',required=False,max_length=18,widget=forms.TextInput(attrs={'autocomplete':'off','inputmode':'numeric','placeholder':'000.000.000-00'}))
     quantity=forms.IntegerField(label='Quantidade de ingressos',min_value=1,max_value=20,initial=1)
     terms=forms.BooleanField(label='Li as informações da compra e as regras do evento.')
     request_key=forms.UUIDField(widget=forms.HiddenInput)
     website=forms.CharField(required=False,widget=forms.TextInput(attrs={'tabindex':'-1','autocomplete':'off'}))
+    def __init__(self,*args,require_document=False,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.require_document=require_document
+        self.fields['document'].required=require_document
     def clean_phone(self):
         val=re.sub(r'\D','',self.cleaned_data['phone'])
         if len(val) in [12,13] and val.startswith('55'): val=val[2:]
         if not re.fullmatch(r'[1-9]\d\d{8,9}',val) or len(set(val))<=2: raise forms.ValidationError('Informe um celular válido com DDD.')
         return '55'+val
+    def clean_document(self):
+        value=re.sub(r'\D','',self.cleaned_data.get('document',''))
+        if not value:
+            if self.require_document: raise forms.ValidationError('Informe o CPF do comprador.')
+            return ''
+        if len(value)!=11 or len(set(value))==1: raise forms.ValidationError('Informe um CPF válido.')
+        for size in (9,10):
+            total=sum(int(value[i])*(size+1-i) for i in range(size))
+            digit=(total*10)%11
+            digit=0 if digit==10 else digit
+            if digit!=int(value[size]): raise forms.ValidationError('Informe um CPF válido.')
+        return value
     def clean_website(self):
         if self.cleaned_data['website']: raise forms.ValidationError('Não foi possível enviar o pedido.')
         return ''
