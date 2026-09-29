@@ -35,9 +35,18 @@ class PanelLoginView(LoginView):
 def health(request): return JsonResponse({'status':'ok'})
 def home(request):
     category=request.GET.get('categoria','')
+    upcoming=Event.objects.filter(status='published',starts_at__gt=timezone.now()).order_by('starts_at')
+    upcoming_games=upcoming.filter(category='football')[:3]
+    upcoming_shows=upcoming.filter(category='concert')[:3]
     events=Event.objects.filter(status='published',starts_at__gt=timezone.now()).prefetch_related('photos').order_by('-featured','starts_at')
     if category in ['football','concert']: events=events.filter(category=category)
-    return render(request,'core/home.html',{'events':events,'category':category,'banners':Banner.objects.filter(active=True)})
+    return render(request,'core/home.html',{
+        'events':events,
+        'category':category,
+        'banners':Banner.objects.filter(active=True),
+        'upcoming_games':upcoming_games,
+        'upcoming_shows':upcoming_shows,
+    })
 def event_detail(request,pk):
     event=get_object_or_404(Event,pk=pk,status='published')
     return render(request,'core/event.html',{'event':event})
