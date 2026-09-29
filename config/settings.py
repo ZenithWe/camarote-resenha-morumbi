@@ -118,6 +118,8 @@ EMAIL_PORT=int(os.getenv('EMAIL_PORT','587'))
 EMAIL_USE_TLS=os.getenv('EMAIL_USE_TLS','1')=='1'
 EMAIL_HOST_USER=os.getenv('EMAIL_HOST_USER','').strip()
 EMAIL_HOST_PASSWORD=os.getenv('EMAIL_HOST_PASSWORD','').strip()
+if EMAIL_HOST.lower()=='smtp.gmail.com':
+    EMAIL_HOST_PASSWORD=''.join(EMAIL_HOST_PASSWORD.split())
 DEFAULT_FROM_EMAIL=os.getenv('DEFAULT_FROM_EMAIL','').strip() or EMAIL_HOST_USER
 SERVER_EMAIL=DEFAULT_FROM_EMAIL or 'webmaster@localhost'
 EMAIL_TIMEOUT=int(os.getenv('EMAIL_TIMEOUT','15'))
