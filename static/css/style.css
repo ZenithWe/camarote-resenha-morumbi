@@ -5,3 +5,35 @@
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}.btn:hover{transform:none}.category-card:hover>img{transform:none}}
 
 .image-credits{font-size:.75rem;line-height:1.6;color:#80838b;padding-bottom:22px}.image-credits a{text-decoration:underline}.panel-body .sidebar nav>a{font-size:.875rem}.panel-body .surface-heading p,.panel-body .page-heading p{font-size:.875rem}.category-content p,.experience-content>p,.section-intro{font-size:1rem}
+
+.public-agenda{background:#f6f7f8}
+.agenda-heading{margin-bottom:36px}
+.agenda-columns{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.agenda-group{min-width:0}
+.agenda-group-title{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.agenda-group-title h3{margin:0;font-size:1.25rem}
+.agenda-icon{width:40px;height:40px;border-radius:9px;display:grid;place-items:center;background:#fdecee;color:var(--red)}
+.agenda-icon.concert{background:#f1edfb;color:#7559b2}
+.agenda-icon svg{width:19px;height:19px}
+.agenda-cards{display:grid;gap:12px}
+.agenda-card{display:grid;grid-template-columns:70px minmax(0,1fr) 28px;gap:18px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:10px;padding:17px 18px;transition:transform .18s,box-shadow .18s,border-color .18s}
+.agenda-card:hover{transform:translateY(-2px);box-shadow:0 8px 28px #1111;border-color:#d8dadd}
+.agenda-date{height:72px;border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:flex-start;justify-content:center;line-height:1}
+.agenda-date strong{font-size:1.9rem;letter-spacing:-.05em}
+.agenda-date span{font-size:.72rem;font-weight:800;color:var(--red);letter-spacing:.09em;margin-top:5px}
+.agenda-date small{font-size:.66rem;color:var(--muted);font-weight:700;margin-top:5px}
+.agenda-card-main{min-width:0}
+.agenda-category{display:block;font-size:.65rem;line-height:1.2;font-weight:800;letter-spacing:.12em;color:var(--red);margin-bottom:7px}
+.agenda-category.concert{color:#7559b2}
+.agenda-card-main h4{font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:10px}
+.agenda-times{display:flex;gap:22px;flex-wrap:wrap}
+.agenda-times>span{display:flex;align-items:center;gap:7px;color:var(--muted)}
+.agenda-times svg{width:15px;height:15px}
+.agenda-times>span>span{display:flex;align-items:baseline;gap:5px}
+.agenda-times small{font-size:.7rem}
+.agenda-times strong{font-size:.78rem;color:var(--ink)}
+.agenda-arrow{color:#a8acb3;display:grid;place-items:center}
+.agenda-arrow svg{width:18px;height:18px}
+.agenda-empty{background:#fff;border:1px dashed #d9dce1;border-radius:10px;padding:30px;color:var(--muted);font-size:.9rem}
+@media(max-width:1000px){.agenda-columns{grid-template-columns:1fr}}
+@media(max-width:760px){.agenda-columns{gap:34px}.agenda-card{grid-template-columns:58px minmax(0,1fr) 20px;gap:12px;padding:14px}.agenda-date{height:68px}.agenda-date strong{font-size:1.65rem}.agenda-card-main h4{font-size:.93rem}.agenda-times{gap:8px 16px}.agenda-times>span>span{display:block}.agenda-times small{display:block;margin-bottom:1px}.agenda-times strong{font-size:.76rem}}
