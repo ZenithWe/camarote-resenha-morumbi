@@ -205,3 +205,14 @@
   .banner-preview-grid{grid-template-columns:1fr .72fr}
   .hero-image{object-position:center center}
 }
+
+/* Gmail setup */
+.email-setup-card{display:flex;justify-content:space-between;align-items:center;gap:24px;margin-bottom:24px;border:1px solid var(--border)}
+.email-setup-card h2{margin-bottom:7px}
+.email-setup-card p{max-width:780px;color:var(--muted);line-height:1.65}
+.email-setup-card .actions{flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:760px){
+  .email-setup-card{display:block}
+  .email-setup-card .actions{margin-top:16px;justify-content:flex-start}
+  .email-setup-card .actions form,.email-setup-card .actions .btn{width:100%}
+}
