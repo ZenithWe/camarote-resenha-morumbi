@@ -1,8 +1,9 @@
-import calendar, csv, uuid, re
+import calendar, csv, uuid, re, json
 from io import BytesIO
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import wraps
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import user_passes_test
 from django.contrib.auth.views import LoginView
@@ -144,6 +145,9 @@ def dashboard(request):
     outgoing=Expense.objects.aggregate(n=Sum('amount'))['n'] or Decimal('0')
     pending=Order.objects.filter(Q(status='review')|Q(status='pending',expires_at__gt=timezone.now())).aggregate(n=Sum('total'))['n'] or Decimal('0')
     sold=paid.aggregate(n=Sum('quantity'))['n'] or 0
+    paid_orders=paid.count()
+    paid_revenue=paid.aggregate(n=Sum('total'))['n'] or Decimal('0')
+    avg_ticket=(paid_revenue/paid_orders) if paid_orders else Decimal('0')
     now=timezone.localdate()
     months=[]
     for offset in range(5,-1,-1):
@@ -152,8 +156,78 @@ def dashboard(request):
         total=paid.filter(paid_at__year=y,paid_at__month=m).aggregate(n=Sum('total'))['n'] or Decimal('0')
         months.append({'label':['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][m-1],'value':total})
     maximum=max([x['value'] for x in months] or [0])
-    for m in months: m['height']=round(m['value']/maximum*100) if maximum else 0
-    return render(request,'panel/dashboard.html',{'active':'dashboard','gross':gross,'refunds':refunds,'fees':fees,'outgoing':outgoing,'balance':gross-refunds-fees-outgoing,'sold':sold,'pending':pending,'months':months,'has_sales':bool(maximum),'recent_orders':Order.objects.select_related('event')[:6],'upcoming':Event.objects.filter(starts_at__gte=timezone.now()).order_by('starts_at')[:4],'review_count':Order.objects.filter(status='review').count(),'published_count':Event.objects.filter(status='published',starts_at__gte=timezone.now()).count()})
+    for item in months: item['height']=round(item['value']/maximum*100) if maximum else 0
+    current_month=paid.filter(paid_at__year=now.year,paid_at__month=now.month).aggregate(n=Sum('total'))['n'] or Decimal('0')
+    prev_index=now.year*12+now.month-2
+    py,pm0=divmod(prev_index,12); pm=pm0+1
+    previous_month=paid.filter(paid_at__year=py,paid_at__month=pm).aggregate(n=Sum('total'))['n'] or Decimal('0')
+    monthly_change=None
+    if previous_month:
+        monthly_change=round(float((current_month-previous_month)/previous_month*100),1)
+    upcoming_qs=Event.objects.filter(status='published',starts_at__gte=timezone.now()).order_by('starts_at')
+    capacity_total=sum(event.capacity for event in upcoming_qs)
+    upcoming_sold=sum(event.sold for event in upcoming_qs)
+    occupancy_percent=round(upcoming_sold/capacity_total*100) if capacity_total else 0
+    top_events=[]
+    for event in Event.objects.filter(orders__status='paid').distinct():
+        revenue=event.orders.filter(status='paid').aggregate(n=Sum('total'))['n'] or Decimal('0')
+        qty=event.orders.filter(status='paid').aggregate(n=Sum('quantity'))['n'] or 0
+        top_events.append({'event':event,'revenue':revenue,'sold':qty})
+    top_events=sorted(top_events,key=lambda item:item['revenue'],reverse=True)[:5]
+    return render(request,'panel/dashboard.html',{
+        'active':'dashboard','gross':gross,'refunds':refunds,'fees':fees,'outgoing':outgoing,'balance':gross-refunds-fees-outgoing,
+        'sold':sold,'pending':pending,'months':months,'has_sales':bool(maximum),'recent_orders':Order.objects.select_related('event')[:6],
+        'upcoming':Event.objects.filter(starts_at__gte=timezone.now()).order_by('starts_at')[:4],
+        'review_count':Order.objects.filter(status='review').count(),'published_count':upcoming_qs.count(),
+        'avg_ticket':avg_ticket,'occupancy_percent':occupancy_percent,'top_events':top_events,
+        'current_month':current_month,'previous_month':previous_month,'monthly_change':monthly_change,
+    })
+
+@operator_required
+def production_status(request):
+    database_engine=settings.DATABASES['default']['ENGINE']
+    checks=[
+        {'label':'Modo de produção (DEBUG desligado)','ok':not settings.DEBUG,'detail':'Evita páginas de erro com detalhes internos.'},
+        {'label':'Banco PostgreSQL','ok':not database_engine.endswith('sqlite3'),'detail':'Necessário para estoque e pedidos concorrentes.'},
+        {'label':'Uploads persistentes no S3','ok':getattr(settings,'S3_CONFIGURED',False),'detail':'Preserva fotos, comprovantes e ingressos entre deploys.'},
+        {'label':'SECRET_KEY persistente','ok':getattr(settings,'SECRET_KEY_PERSISTENT',False),'detail':'Mantém sessões e tokens estáveis entre deploys.'},
+        {'label':'E-mails transacionais','ok':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),'detail':'Reserva, pagamento e ingresso podem gerar avisos automáticos.'},
+        {'label':'Domínio próprio','ok':'onrender.com' not in getattr(settings,'SITE_URL',''),'detail':'Opcional durante testes; recomendado para operação comercial.'},
+    ]
+    return render(request,'panel/production.html',{
+        'active':'production','checks':checks,'db_expires':getattr(settings,'PRODUCTION_DB_EXPIRES_AT',''),
+        'site_url':getattr(settings,'SITE_URL',''),
+    })
+
+@operator_required
+def backup_export(request):
+    events=[]
+    for event in Event.objects.all():
+        events.append({
+            'id':str(event.pk),'title':event.title,'category':event.category,'starts_at':event.starts_at.isoformat(),
+            'doors_at':event.doors_at.isoformat() if event.doors_at else None,'price':str(event.price),'capacity':event.capacity,
+            'status':event.status,'location':event.location,'includes':event.includes,'food_info':event.food_info,
+            'drinks_info':event.drinks_info,'parking_info':event.parking_info,'age_rules':event.age_rules,
+        })
+    orders=[]
+    for order in Order.objects.select_related('event').all():
+        orders.append({
+            'id':str(order.pk),'code':order.code,'event_id':str(order.event_id),'customer_name':order.customer_name,
+            'email':order.email,'phone':order.phone,'quantity':order.quantity,'unit_price':str(order.unit_price),
+            'total':str(order.total),'fee':str(order.fee),'status':order.status,'created_at':order.created_at.isoformat(),
+            'paid_at':order.paid_at.isoformat() if order.paid_at else None,
+        })
+    expenses=[{'id':x.pk,'description':x.description,'amount':str(x.amount),'kind':x.kind,'date':x.date.isoformat()} for x in Expense.objects.all()]
+    cfg=SiteSettings.objects.filter(pk=1).first()
+    data={
+        'generated_at':timezone.now().isoformat(),'version':1,
+        'site':{'texts':cfg.texts if cfg else {},'instagram':cfg.instagram if cfg else '','whatsapp':cfg.whatsapp if cfg else '','contact_email':cfg.contact_email if cfg else '','sales_enabled':cfg.sales_enabled if cfg else False},
+        'events':events,'orders':orders,'expenses':expenses,
+    }
+    response=HttpResponse(json.dumps(data,ensure_ascii=False,indent=2),content_type='application/json; charset=utf-8')
+    response['Content-Disposition']=f'attachment; filename="resenha-backup-{timezone.localdate().isoformat()}.json"'
+    log(request.user,'Backup administrativo exportado')
+    return response
 
 @operator_required
 def panel_events(request):
