@@ -61,9 +61,17 @@ class EventForm(forms.ModelForm):
 class BannerForm(forms.ModelForm):
     class Meta:
         model=Banner
-        fields=['title','subtitle','eyebrow','image','button_text','link','active','position']
-        widgets={'image':forms.ClearableFileInput(attrs={'accept':'image/jpeg,image/png,image/webp'})}
+        fields=['title','subtitle','eyebrow','image','mobile_image','button_text','link','active','position']
+        widgets={
+            'image':forms.ClearableFileInput(attrs={'accept':'image/jpeg,image/png,image/webp'}),
+            'mobile_image':forms.ClearableFileInput(attrs={'accept':'image/jpeg,image/png,image/webp'}),
+        }
+        help_texts={
+            'image':'Versão para computadores. Recomendado: imagem horizontal, como 1920×800.',
+            'mobile_image':'Versão para celulares. Recomendado: imagem vertical, como 1080×1350. Se não enviar, o site usa a imagem de computador.',
+        }
     def clean_image(self): return clean_image(self.cleaned_data.get('image'))
+    def clean_mobile_image(self): return clean_image(self.cleaned_data.get('mobile_image'))
     def clean_link(self): return secure_link(self.cleaned_data['link'])
 
 class SettingsForm(forms.ModelForm):
