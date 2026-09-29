@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 from django.conf import settings
 from django.contrib import messages
+from django.core.mail import send_mail
 from django.contrib.auth.decorators import user_passes_test
 from django.contrib.auth.views import LoginView
 from django.core.exceptions import ValidationError, PermissionDenied
@@ -24,7 +25,7 @@ from django.views.decorators.cache import never_cache
 from .models import Event, EventPhoto, Order, OrderTicket, EventTicket, Coupon, CustomerLoginCode, WebhookLog, Testimonial, Banner, SiteSettings, Expense, AuditLog
 from .forms import EventForm, BannerForm, SettingsForm, MediaForm, ContentForm, CheckoutForm, ReceiptForm, ExpenseForm, TicketForm, CouponForm, TicketInventoryUploadForm, CustomerEmailForm, CustomerCodeForm, TestimonialForm, clean_image
 from .content import CONTENT, DEFAULT_TEXTS
-from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook, assign_event_tickets, send_customer_login_code, customer_code_hash
+from .services import create_order, change_order, report_receipt, pix_payload, fingerprint, log, occupied, notify_order, sync_pagarme_charge, sync_mercadopago_payment, validate_mercadopago_webhook, assign_event_tickets, send_customer_login_code, customer_code_hash, email_shell
 
 operator_required=user_passes_test(lambda u:u.is_active and u.is_superuser,login_url='/painel/entrar/')
 def is_admin_test_mode(request):
@@ -400,7 +401,7 @@ def production_status(request):
         {'label':'Banco PostgreSQL','ok':not database_engine.endswith('sqlite3'),'detail':'Necessário para estoque e pedidos concorrentes.'},
         {'label':'Uploads persistentes no S3','ok':getattr(settings,'S3_CONFIGURED',False),'detail':'Preserva fotos, comprovantes e ingressos entre deploys.'},
         {'label':'SECRET_KEY persistente','ok':getattr(settings,'SECRET_KEY_PERSISTENT',False),'detail':'Mantém sessões e tokens estáveis entre deploys.'},
-        {'label':'E-mails transacionais','ok':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),'detail':'Reserva, pagamento e ingresso podem gerar avisos automáticos.'},
+        {'label':'Gmail / e-mails transacionais','ok':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),'detail':'Gmail SMTP preparado para códigos da Minha Conta, reserva, pagamento e ingresso.'},
         {'label':'WhatsApp transacional','ok':getattr(settings,'WHATSAPP_NOTIFICATIONS_ENABLED',False),'detail':'Ativa avisos pelo canal oficial quando URL e token forem configurados.'},
         {'label':'Mercado Pago automático','ok':getattr(settings,'MERCADOPAGO_CONFIGURED',False),'detail':'Gera Pix pela API e confirma o pagamento por webhook após consultar o pagamento no gateway.'},
         {'label':'Assinatura do webhook Mercado Pago','ok':bool(getattr(settings,'MERCADOPAGO_WEBHOOK_SECRET','')),'detail':'Valida a origem das notificações com a assinatura secreta do Mercado Pago.'},
@@ -410,7 +411,30 @@ def production_status(request):
         'active':'production','checks':checks,'db_expires':getattr(settings,'PRODUCTION_DB_EXPIRES_AT',''),
         'site_url':getattr(settings,'SITE_URL',''),'payment_provider':getattr(settings,'PAYMENT_PROVIDER','manual'),'pagarme_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/pagarme/",'mercadopago_webhook_url':f"{getattr(settings,'SITE_URL','')}/webhooks/mercadopago/",
         'webhook_logs':WebhookLog.objects.all()[:12],
+        'email_ready':getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False),
+        'email_host_configured':bool(getattr(settings,'EMAIL_HOST_USER','')),
+
     })
+
+@operator_required
+@require_POST
+def send_test_email(request):
+    if not getattr(settings,'EMAIL_NOTIFICATIONS_ENABLED',False):
+        messages.error(request,'O Gmail ainda não está completo. Configure EMAIL_HOST_USER e EMAIL_HOST_PASSWORD no Render.')
+        return redirect('production_status')
+    recipient=settings.EMAIL_HOST_USER
+    plain='Este é um e-mail de teste do Camarote Resenha Morumbi. Se você recebeu esta mensagem, o envio automático está funcionando.'
+    html_body=email_shell('E-mail configurado com sucesso','O envio automático do site está funcionando.',[
+        'Este é um teste enviado pela área administrativa.',
+        'A partir de agora o site pode enviar códigos da Minha Conta e atualizações dos pedidos.'
+    ],button_text='Abrir o site',button_url=settings.SITE_URL)
+    try:
+        sent=send_mail('Resenha Morumbi • teste de e-mail',plain,settings.DEFAULT_FROM_EMAIL,[recipient],fail_silently=False,html_message=html_body)
+        if sent: messages.success(request,'E-mail de teste enviado para a conta configurada.')
+        else: messages.error(request,'O servidor não confirmou o envio do e-mail.')
+    except Exception:
+        messages.error(request,'Não foi possível enviar. Confira o Gmail e a senha de aplicativo no Render.')
+    return redirect('production_status')
 
 @operator_required
 def backup_export(request):
