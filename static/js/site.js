@@ -66,3 +66,18 @@ if(paymentWatch){
   };
   setTimeout(poll,4000);
 }
+
+
+const eventCategory=$('#id_category');
+const footballCompetition=$('[data-football-competition]');
+if(eventCategory&&footballCompetition){
+  const competitionSelect=$('#id_competition',footballCompetition);
+  const updateCompetitionField=()=>{
+    const isFootball=eventCategory.value==='football';
+    footballCompetition.hidden=!isFootball;
+    footballCompetition.setAttribute('aria-hidden',String(!isFootball));
+    if(competitionSelect) competitionSelect.required=isFootball;
+  };
+  eventCategory.addEventListener('change',updateCompetitionField);
+  updateCompetitionField();
+}
