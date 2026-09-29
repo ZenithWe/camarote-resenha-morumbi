@@ -15,6 +15,7 @@ from django.db.models import Q, Sum, Count
 from django.db.models.functions import TruncMonth
 from django.http import Http404, HttpResponse, FileResponse, JsonResponse
 from django.shortcuts import render, get_object_or_404, redirect
+from django.templatetags.static import static
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -90,8 +91,13 @@ def public_agenda(request):
 
 def event_detail(request,pk):
     event=get_object_or_404(Event.objects.prefetch_related('photos'),pk=pk,status='published')
-    canonical=f"{getattr(settings,'SITE_URL','')}{reverse('event_detail',args=[event.pk])}"
-    return render(request,'core/event.html',{'event':event,'canonical_url':canonical})
+    site_url=getattr(settings,'SITE_URL','')
+    canonical=f"{site_url}{reverse('event_detail',args=[event.pk])}"
+    if event.cover:
+        og_image_url=f"{site_url}{reverse('public_image',args=[event.cover.name])}"
+    else:
+        og_image_url=f"{site_url}{static('images/morumbi.jpg')}"
+    return render(request,'core/event.html',{'event':event,'canonical_url':canonical,'og_image_url':og_image_url})
 def terms(request): return render(request,'core/terms.html')
 
 def public_image(request,path):
