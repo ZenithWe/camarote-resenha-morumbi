@@ -54,7 +54,7 @@ class EventForm(forms.ModelForm):
     def clean_cover(self): return clean_image(self.cleaned_data.get('cover'))
     def clean(self):
         cleaned=super().clean()
-        if cleaned.get('category')=='football' and not cleaned.get('competition') and not self.instance.pk:
+        if cleaned.get('category')=='football' and not cleaned.get('competition') and self.instance._state.adding:
             self.add_error('competition','Selecione a competição deste jogo.')
         elif cleaned.get('category')!='football':
             cleaned['competition']=''
