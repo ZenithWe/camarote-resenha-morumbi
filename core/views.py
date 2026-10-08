@@ -138,7 +138,29 @@ def public_image(request,path):
         image.read(1)
         image.seek(0)
     except Exception:
-        logger.warning('Uploaded public image unavailable: %s', path, exc_info=True)
+        # Some S3-compatible providers reject HeadObject (used internally by
+        # django-storages) even when GetObject succeeds. Try the object directly
+        # before hiding the uploaded photo behind a fallback.
+        try:
+            storage = default_storage
+            if hasattr(storage, 'bucket_name') and hasattr(storage, 'connection'):
+                key = storage._normalize_name(path)
+                result = storage.connection.meta.client.get_object(
+                    Bucket=storage.bucket_name, Key=key
+                )
+                body = result['Body']
+                try:
+                    data = body.read(12 * 1024 * 1024 + 1)
+                finally:
+                    body.close()
+                if len(data) <= 12 * 1024 * 1024:
+                    response = HttpResponse(data, content_type='image/webp')
+                    response['Cache-Control'] = 'public, max-age=3600'
+                    response['X-Content-Type-Options'] = 'nosniff'
+                    return response
+        except Exception:
+            logger.warning('S3 GetObject unavailable for public photo %s', path, exc_info=True)
+        logger.warning('Uploaded public image unavailable: %s', path)
         return _public_image_fallback(path)
     response = FileResponse(image, content_type='image/webp')
     response['Cache-Control'] = 'public, max-age=3600'
