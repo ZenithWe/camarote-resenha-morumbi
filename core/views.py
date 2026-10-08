@@ -105,12 +105,44 @@ def event_detail(request,pk):
     return render(request,'core/event.html',{'event':event,'canonical_url':canonical,'og_image_url':og_image_url})
 def terms(request): return render(request,'core/terms.html')
 
+def _public_image_fallback(path):
+    # Keep the original file reference in the database. If storage becomes
+    # available again, the original image will be served automatically.
+    placeholder = 'images/morumbi.jpg'
+    try:
+        if SiteSettings.objects.filter(logo=path).exists():
+            placeholder = 'favicon.svg'
+        elif (
+            Event.objects.filter(cover=path, category='concert').exists()
+            or EventPhoto.objects.filter(image=path, event__category='concert').exists()
+            or SiteSettings.objects.filter(concert_image=path).exists()
+            or SiteSettings.objects.filter(experience_image=path).exists()
+        ):
+            placeholder = 'images/concert.jpg'
+    except Exception:
+        logger.warning('Could not identify fallback type for image %s', path, exc_info=True)
+    response = redirect(static(placeholder))
+    # Never cache the redirect: the real uploaded photo might become available.
+    response['Cache-Control'] = 'no-store'
+    return response
+
+
 def public_image(request,path):
-    if not re.fullmatch(r'images/[a-f0-9]{32}\.webp',path): raise Http404
-    if not default_storage.exists(path): raise Http404
-    response=FileResponse(default_storage.open(path,'rb'),content_type='image/webp')
-    response['Cache-Control']='public, max-age=86400'
-    response['X-Content-Type-Options']='nosniff'
+    if not re.fullmatch(r'images/[a-f0-9]{32}\.webp',path):
+        raise Http404
+    try:
+        # Reading one byte forces cloud storage errors to surface before the
+        # response starts streaming. Some providers allow GET but reject HEAD,
+        # so opening directly is safer than calling storage.exists().
+        image = default_storage.open(path, 'rb')
+        image.read(1)
+        image.seek(0)
+    except Exception:
+        logger.warning('Uploaded public image unavailable: %s', path, exc_info=True)
+        return _public_image_fallback(path)
+    response = FileResponse(image, content_type='image/webp')
+    response['Cache-Control'] = 'public, max-age=3600'
+    response['X-Content-Type-Options'] = 'nosniff'
     return response
 
 @never_cache
